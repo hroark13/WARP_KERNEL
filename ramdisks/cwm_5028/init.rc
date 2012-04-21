@@ -1,0 +1,86 @@
+on early-init
+    start ueventd
+
+	on init
+
+    export PATH /sbin
+    export ANDROID_ROOT /system
+    export ANDROID_DATA /data
+    export EXTERNAL_STORAGE /sdcard
+
+
+
+    mkdir /boot
+    mkdir /sdcard
+    mkdir /sd-ext
+    mkdir /datadata
+    mkdir /emmc
+    mkdir /system
+    mkdir /data
+    mkdir /cache
+    mkdir /efs
+    mount /tmp /tmp tmpfs
+    wait /dev/block/mmcblk0p18
+    symlink /sbin/busybox /sbin/sh
+
+	on fs
+    mount tmpfs tmpfs /tmp
+
+	on post-fs
+
+    write /proc/sys/kernel/panic_on_oops 1
+    write /proc/sys/kernel/hung_task_timeout_secs 0
+    write /proc/cpu/alignment 4
+    write /proc/sys/kernel/sched_latency_ns 10000000
+    write /proc/sys/kernel/sched_wakeup_granularity_ns 2000000
+    write /proc/sys/kernel/sched_compat_yield 1
+    write /proc/sys/kernel/sched_child_runs_first 0
+
+	on boot
+
+    ifup lo
+    hostname localhost
+    domainname localdomain
+
+    # mount inital filesystems
+    mount tmpfs tmpfs /tmp size=64m
+    wait /dev/block/mmcblk1p1
+
+    # turn up backlight & keypad
+    write /sys/class/leds/lcd-backlight/brightness 255
+    write /sys/class/leds/button-backlight/brightness 255
+
+    class_start default
+
+
+service ueventd /sbin/ueventd
+    critical
+
+service usbconfig /sbin/usbconfig
+    oneshot
+
+service rmt_storage /sbin/rmt_storage_recovery /dev/block/mmcblk0p10 /dev/block/mmcblk0p11 /dev/block/mmcblk0p17
+    user root
+
+service recovery /sbin/recovery
+
+#liushoubin test
+service console /sbin/busybox ash
+    console
+
+service diagtest /sbin/diagftmtest
+    user root
+    group radio cache inet misc audio qcom_oncrpc diag
+
+service adbd /sbin/adbd recovery
+
+on property:persist.service.adb.enable=1
+    start adbd
+
+on property:persist.service.adb.enable=0
+    stop adbd
+
+setprop ro.secure "0"
+setprop ro.allow.mock.location "0"
+setprop ro.debuggable "1"
+setprop persist.service.adb.enable "1"

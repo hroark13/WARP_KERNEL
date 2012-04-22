@@ -13,7 +13,10 @@
  * GNU General Public License for more details.
  *
  */
-
+/*
+20110615 liuyijian cancel "work_vibrator_on" when enable vibrator ZTE_LYJ_VIB_20110615
+*/
+ 
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/err.h>
@@ -26,7 +29,7 @@
 #define PM_LIBPROG      0x30000061
 //change rpc ver number
 #if (CONFIG_ZTE_PLATFORM)
-#define PM_LIBVERS      0x00030005  
+#define PM_LIBVERS      0x00030004
 #define HTC_PROCEDURE_SET_VIB_ON_OFF	22
 #else
 #if (CONFIG_MSM_AMSS_VERSION == 6220) || (CONFIG_MSM_AMSS_VERSION == 6225)
@@ -43,9 +46,6 @@ static struct work_struct work_vibrator_on;
 static struct work_struct work_vibrator_off;
 static struct hrtimer vibe_timer;
 
-static volatile int g_vibrator_status=0;//represent the vibrator's real on off status; 1:on  0:off
-struct timespec volatile g_ts_start;
-struct timespec volatile g_ts_end;
 static void set_pmic_vibrator(int on)
 {
     static struct msm_rpc_endpoint *vib_endpoint;
@@ -75,94 +75,46 @@ static void set_pmic_vibrator(int on)
 
     msm_rpc_call(vib_endpoint, HTC_PROCEDURE_SET_VIB_ON_OFF, &req,
                  sizeof(req), 5 * HZ);
-	
-    if(on)
-    {
-        g_vibrator_status=1;
-        g_ts_start = current_kernel_time();
-    }
-    else
-    {
-        if(g_vibrator_status==1)
-        {
-            g_ts_end = current_kernel_time();
-            pr_info("vibrator vibrated %ld ms.\n",
-                    (g_ts_end.tv_sec-g_ts_start.tv_sec)*1000+g_ts_end.tv_nsec/1000000-g_ts_start.tv_nsec/1000000
-                   );
-        }
-        g_vibrator_status=0;
-    }
 }
-
-
 
 static void pmic_vibrator_on(struct work_struct *work)
 {
-    if( g_vibrator_status==0)//if vibrator is on now
-    {
-        set_pmic_vibrator(1);
-        pr_info("Q:pmic_vibrator_on,done\n");
-    }
-    else
-    {
-        pr_info("Q:pmic_vibrator_on, already on, do nothing.\n");
-    }
+    pr_info("pmic_vibrator_on\n"); //ZTE_VIB_LYJ_20110614
+
+    set_pmic_vibrator(1);
 }
 
 static void pmic_vibrator_off(struct work_struct *work)
 {
-    if( g_vibrator_status==1)//if vibrator is on now
-    {
-        set_pmic_vibrator(0);
-        pr_info("Q:pmic_vibrator_off,done\n"); 
-    }
-    else
-    {
-        pr_info("Q:pmic_vibrator_off, already off, do nothing.\n");
-    }
+    pr_info("pmic_vibrator_off\n"); //ZTE_VIB_LYJ_20110614
+
+    set_pmic_vibrator(0);
 }
 
-static int timed_vibrator_on(struct timed_output_dev *sdev)
+static void timed_vibrator_on(struct timed_output_dev *sdev)
 {
-    if(!schedule_work(&work_vibrator_on))
-    {
-        pr_info("vibrator schedule on work failed !\n");
-        return 0;
-    }
-    return 1;
+    schedule_work(&work_vibrator_on);
 }
 
-static int timed_vibrator_off(struct timed_output_dev *sdev)
+static void timed_vibrator_off(struct timed_output_dev *sdev)
 {
-    if(!schedule_work(&work_vibrator_off))
-    {
-        pr_info("vibrator schedule off work failed !\n");
-        return 0;
-    }
-    return 1;
+    schedule_work(&work_vibrator_off);
 }
 
 static void vibrator_enable(struct timed_output_dev *dev, int value)
 {
-    pr_info("vibrator_enable,%d ms,vibrator:%s now.\n",value,g_vibrator_status?"on":"off");
+    pr_info("vibrator_enable,%d ms\n",value);
     hrtimer_cancel(&vibe_timer);
+    //ZTE_LYJ_VIB_20110615 start
     cancel_work_sync(&work_vibrator_on);
-    cancel_work_sync(&work_vibrator_off);
-
+    //ZTE_LYJ_VIB_20110615 end
+    
     if (value == 0)
-    {
-        if(!timed_vibrator_off(dev))//if queue failed, delay 10ms try again by timer
-        {
-            value=10;
-            hrtimer_start(&vibe_timer,
-                          ktime_set(value / 1000, (value % 1000) * 1000000),
-                          HRTIMER_MODE_REL);
-            value=0;
-        }
-    }
+        timed_vibrator_off(dev);
     else
     {
         value = (value > 15000 ? 15000 : value);
+
         timed_vibrator_on(dev);
 
         hrtimer_start(&vibe_timer,
@@ -184,16 +136,8 @@ static int vibrator_get_time(struct timed_output_dev *dev)
 
 static enum hrtimer_restart vibrator_timer_func(struct hrtimer *timer)
 {
-    int value=0;
-    pr_info("timer:vibrator timeout!\n");
-    if(!timed_vibrator_off(NULL))
-    {
-        value=500;
-        hrtimer_start(&vibe_timer,
-                      ktime_set(value / 1000, (value % 1000) * 1000000),
-                      HRTIMER_MODE_REL);
-        value=0;
-    }
+    pr_info("vibrator timeout off\n");
+    timed_vibrator_off(NULL);
     return HRTIMER_NORESTART;
 }
 

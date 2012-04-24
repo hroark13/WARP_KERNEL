@@ -93,9 +93,9 @@ static struct clkctl_acpu_speed *backup_s;
 
 static struct pll pll2_tbl[] = {
 	{  42, 0, 1, 0 }, /*  806 MHz */
-	{  53, 1, 3, 0 }, /* 1024 MHz */
-	{ 125, 0, 1, 1 }, /* 1200 MHz */
-	{  73, 0, 1, 0 }, /* 1401 MHz */
+	{  53, 0, 1, 0 }, /* 1024 MHz */
+	{ 125, 0, 1, 0 }, /* 1200 MHz */
+	{  73, 1, 3, 0 }, /* 1401 MHz */
 };
 
 /* Use negative numbers for sources that can't be enabled/disabled */

@@ -57,6 +57,8 @@
 #define VDD_RAW(mv) (((MV(mv) / V_STEP) - 30) | VREG_DATA)
 
 #define MAX_AXI_KHZ 192000
+#define SEMC_ACPU_MIN_UV_MV 750U
+#define SEMC_ACPU_MAX_UV_MV 1525U
 
 struct clock_state {
 	struct clkctl_acpu_speed	*current_speed;
@@ -92,10 +94,18 @@ static struct clock_state drv_state = { 0 };
 static struct clkctl_acpu_speed *backup_s;
 
 static struct pll pll2_tbl[] = {
-	{  42, 0, 1, 0 }, /*  806 MHz */
-	{  53, 1, 3, 0 }, /* 1024 MHz */
-	{ 125, 0, 1, 1 }, /* 1200 MHz */
-	{  73, 0, 1, 0 }, /* 1401 MHz */
+	{ 42, 0, 1, 0 }, /* 806 MHz */
+	{ 48, 1, 3, 0 }, /* 921 MHz */
+	{ 53, 1, 3, 0 }, /* 1024 MHz */
+	{ 58, 1, 3, 0 }, /* 1113 MHz */
+	{ 63, 1, 3, 0 }, /* 1209 MHz */
+	{ 68, 1, 3, 0 }, /* 1305 MHz */
+	{ 73, 1, 3, 0 }, /* 1401 MHz */
+	{ 78, 1, 3, 0 }, /* 1516 MHz */
+	{ 83, 1, 3, 0 }, /* 1612 MHz */
+	{ 88, 1, 3, 0 }, /* 1708 MHz */
+	{ 93, 1, 3, 0 }, /* 1804 MHz */
+	{ 98, 1, 3, 0 }, /* 1900 MHz */
 };
 
 /* Use negative numbers for sources that can't be enabled/disabled */
@@ -108,22 +118,31 @@ static struct pll pll2_tbl[] = {
  * know all the h/w requirements.
  */
 static struct clkctl_acpu_speed acpu_freq_tbl[] = {
-	{ 0, 24576,  SRC_LPXO, 0, 0,  30720000,  900, VDD_RAW(900) },
-	{ 0, 61440,  PLL_3,    5, 11, 61440000,  900, VDD_RAW(900) },
-	{ 1, 122880, PLL_3,    5, 5,  61440000,  900, VDD_RAW(900) },
-	{ 0, 184320, PLL_3,    5, 4,  61440000,  900, VDD_RAW(900) },
-	{ 0, MAX_AXI_KHZ, SRC_AXI, 1, 0, 61440000, 900, VDD_RAW(900) },
-	{ 1, 245760, PLL_3,    5, 2,  61440000,  900, VDD_RAW(900) },
-	{ 1, 368640, PLL_3,    5, 1,  122800000, 900, VDD_RAW(900) },
-	/* AXI has MSMC1 implications. See above. */
-	{ 1, 768000, PLL_1,    2, 0,  153600000, 1050, VDD_RAW(1050) },
-	/*
-	 * AXI has MSMC1 implications. See above.
+	{ 0, 24576,SRC_LPXO, 0, 0, 30720000, 900, VDD_RAW(900) },
+	{ 0, 61440,   PLL_3, 5, 11, 61440000, 900, VDD_RAW(900) },
+	{ 1, 122880,  PLL_3, 5, 5, 61440000, 900, VDD_RAW(900) },
+	{ 0, 184320,  PLL_3, 5, 4, 61440000, 900, VDD_RAW(900) },
+	{ 1, 245760,  PLL_3, 5, 2, 61440000, 900, VDD_RAW(900) },
+	{ 1, 368640,  PLL_3, 5, 1, 122800000, 900, VDD_RAW(900) },
+	{ 1, 460800,  PLL_1, 2, 0, 153600000, 900, VDD_RAW(900) },
+	{ 1, 576000,  PLL_1, 2, 0, 153600000, 950, VDD_RAW(950) },
+	{ 1, 652800,  PLL_1, 2, 0, 153600000, 950, VDD_RAW(950) },
+	{ 1, 768000,  PLL_1, 2, 0, 153600000, 950, VDD_RAW(950) },
+	{ 1, 806400,  PLL_2, 3, 0, UINT_MAX, 1000, VDD_RAW(1000), &pll2_tbl[0]},
+	{ 1, 921600,  PLL_2, 3, 0, UINT_MAX, 1000, VDD_RAW(1000), &pll2_tbl[1]},
+	{ 1, 1024000, PLL_2, 3, 0, UINT_MAX, 1000, VDD_RAW(1000), &pll2_tbl[2]},
+	{ 1, 1113000, PLL_2, 3, 0, UINT_MAX, 1050, VDD_RAW(1050), &pll2_tbl[3]},
+	{ 1, 1209600, PLL_2, 3, 0, UINT_MAX, 1100, VDD_RAW(1100), &pll2_tbl[4]},
+	{ 1, 1305600, PLL_2, 3, 0, UINT_MAX, 1150, VDD_RAW(1150), &pll2_tbl[5]},
+	{ 1, 1401600, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[6]},
+
+	/* Values Commented out will be tested at a later date to ensure compatability and stability
+	{ 1, 1516800, PLL_2, 3, 0, UINT_MAX, 1250, VDD_RAW(1250), &pll2_tbl[7]},
+	{ 1, 1612800, PLL_2, 3, 0, UINT_MAX, 1300, VDD_RAW(1350), &pll2_tbl[8]},
+	{ 0, 1708800, PLL_2, 3, 0, UINT_MAX, 1350, VDD_RAW(1350), &pll2_tbl[9]},
+	{ 0, 1804800, PLL_2, 3, 0, UINT_MAX, 1350, VDD_RAW(1350), &pll2_tbl[10]},
+	{ 0, 1900800, PLL_2, 3, 0, UINT_MAX, 1450, VDD_RAW(1450), &pll2_tbl[11]},
 	 */
-	{ 1, 806400,  PLL_2, 3, 0, UINT_MAX, 1100, VDD_RAW(1100), &pll2_tbl[0]},
-	{ 1, 1024000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[1]},
-	{ 1, 1200000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[2]},
-	{ 1, 1401600, PLL_2, 3, 0, UINT_MAX, 1250, VDD_RAW(1250), &pll2_tbl[3]},
 	{ 0 }
 };
 
@@ -159,9 +178,6 @@ static void acpuclk_config_pll2(struct pll *pll)
 {
 	uint32_t config = readl(PLL2_CONFIG_ADDR);
 
-	/* Make sure write to disable PLL_2 has completed
-	 * before reconfiguring that PLL. */
-	mb();
 	writel(pll->l, PLL2_L_VAL_ADDR);
 	writel(pll->m, PLL2_M_VAL_ADDR);
 	writel(pll->n, PLL2_N_VAL_ADDR);
@@ -170,8 +186,6 @@ static void acpuclk_config_pll2(struct pll *pll)
 	else
 		config &= ~BIT(15);
 	writel(config, PLL2_CONFIG_ADDR);
-	/* Make sure PLL is programmed before returning. */
-	mb();
 }
 
 /* Set clock source and divider given a clock speed */
@@ -197,8 +211,6 @@ static void acpuclk_set_src(const struct clkctl_acpu_speed *s)
 	/* Program clock source selection. */
 	writel(reg_clksel, SCSS_CLK_SEL_ADDR);
 
-	/* Make sure switch to new source is complete. */
-	dsb();
 }
 
 int acpuclk_set_rate(int cpu, unsigned long rate, enum setrate_reason reason)
@@ -328,6 +340,12 @@ uint32_t acpuclk_get_switch_time(void)
 {
 	return drv_state.acpu_switch_time_us;
 }
+
+unsigned long clk_get_max_axi_khz(void)
+{
+	return MAX_AXI_KHZ;
+}
+EXPORT_SYMBOL(clk_get_max_axi_khz);
 
 /*----------------------------------------------------------------------------
  * Clock driver initialization
@@ -483,3 +501,48 @@ void __init msm_acpu_clock_init(struct msm_acpu_clock_platform_data *clkdata)
 	lpj_init();
 	setup_cpufreq_table();
 }
+
+#ifdef CONFIG_CPU_FREQ_VDD_LEVELS
+
+		ssize_t acpuclk_get_vdd_levels_str(char *buf)
+	{
+	int i, len = 0;
+		if (buf)
+{
+	mutex_lock(&drv_state.lock);
+		for (i = 0; acpu_freq_tbl[i].acpu_clk_khz; i++)
+	{
+	if(acpu_freq_tbl[i].use_for_scaling==1)
+{
+		len += sprintf(buf + len, "%8u: %4d\n", acpu_freq_tbl[i].acpu_clk_khz, acpu_freq_tbl[i].vdd_mv);
+	}
+}
+		mutex_unlock(&drv_state.lock);
+	}
+	return len;
+}
+
+void acpuclk_set_vdd(unsigned int khz, int vdd)
+{
+	int i;
+	unsigned int new_vdd;
+		vdd = vdd / V_STEP * V_STEP;
+	mutex_lock(&drv_state.lock);
+		for (i = 0; acpu_freq_tbl[i].acpu_clk_khz; i++)
+	{
+	if(acpu_freq_tbl[i].use_for_scaling==1)
+{
+	if (khz == 0)
+		new_vdd = min(max((acpu_freq_tbl[i].vdd_mv + vdd), SEMC_ACPU_MIN_UV_MV), SEMC_ACPU_MAX_UV_MV);
+else if (acpu_freq_tbl[i].acpu_clk_khz == khz)
+	new_vdd = min(max((unsigned int)vdd, SEMC_ACPU_MIN_UV_MV), SEMC_ACPU_MAX_UV_MV);
+else continue;
+
+		acpu_freq_tbl[i].vdd_mv = new_vdd;
+		acpu_freq_tbl[i].vdd_raw = VDD_RAW(new_vdd);
+	}
+}
+	mutex_unlock(&drv_state.lock);
+}
+
+#endif

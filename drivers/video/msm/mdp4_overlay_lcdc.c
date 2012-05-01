@@ -54,6 +54,11 @@ extern void lcdc_lead_sleep(void);
 extern void lcdc_truly_sleep(void);
 extern u32 LcdPanleID;
 #endif
+#ifdef CONFIG_FB_MSM_LCDC_WVGA_ARTHUR   //ZTE_LCD_LHT_20100810_001
+extern void lcdc_lead_sleep(void);
+extern void lcdc_truly_sleep(void);
+extern u32 LcdPanleID;
+#endif
 int mdp_lcdc_on(struct platform_device *pdev)
 {
 	int lcdc_width;
@@ -256,15 +261,25 @@ int mdp_lcdc_on(struct platform_device *pdev)
 int mdp_lcdc_off(struct platform_device *pdev)
 {
 	int ret = 0;
-
+	uint32 data;
 	#ifdef CONFIG_FB_MSM_LCDC_LEAD_WVGA_PANEL    //ZTE_LCD_LHT_20100810_001
 		if(LcdPanleID==72)
 			lcdc_lead_sleep();
+	#endif
+
+	#ifdef CONFIG_FB_MSM_LCDC_WVGA_ARTHUR
+		if(LcdPanleID==60)
+			lcdc_lead_sleep();
+		if(LcdPanleID==61)
+			lcdc_truly_sleep();
 	#endif
 	/* MDP cmd block enable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 	MDP_OUTP(MDP_BASE + LCDC_BASE, 0);
 	/* MDP cmd block disable */
+	data = inpdw(MDP_BASE + 0x10100);
+	data = data&0xffffff00;
+	outpdw(MDP_BASE + 0x10100, data); 
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 	mdp_pipe_ctrl(MDP_OVERLAY0_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 

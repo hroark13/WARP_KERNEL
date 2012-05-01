@@ -47,6 +47,9 @@ typedef enum
 	LCD_PANEL_NONE = 0,
 	LCD_PANEL_LEAD_WVGA,
 	LCD_PANEL_TRULY_WVGA,
+	LCD_PANEL_BOE_WVGA,
+	LCD_PANEL_TFT_LEAD_RM68120,
+	LCD_PANEL_HX8369_TIANMA_WVGA,
 }LCD_PANEL_TYPE;
 
 static LCD_PANEL_TYPE g_lcd_panel_type = LCD_PANEL_NONE;
@@ -66,11 +69,17 @@ static void gpio_lcd_truly_emuspi_write_one_index(unsigned short addr);
 static void gpio_lcd_truly_emuspi_write_one_data(unsigned short data);
 static void gpio_lcd_lead_emuspi_write_one_index(unsigned int addr,unsigned short data);
 static void lcdc_lead_init(void);
+static void lcdc_boe_init(void);
+static void lcdc_lead_rm68120_init(void);
 static void lcdc_truly_init(void);
 static void lcd_panel_init(void);
+static void lcdc_hx8369_tianma_init(void);
 static void lcdc_set_bl(struct msm_fb_data_type *mfd);
 void lcdc_lead_sleep(void);
 void lcdc_truly_sleep(void);
+void lcdc_hx8369_tianma_sleep(void);
+void lcdc_boe_sleep(void);
+void lcdc_lead_rm68120_sleep(void);
 static void spi_init(void);
 static int lcdc_panel_on(struct platform_device *pdev);
 static int lcdc_panel_off(struct platform_device *pdev);
@@ -458,6 +467,91 @@ static void gpio_lcd_lead_emuspi_read_one_index(unsigned int addr,unsigned int *
 	*data =  bits1;
 	gpio_direction_output(spi_cs, 1);
 }
+
+static void gpio_lcd_tianma_write_one_index(unsigned short addr)
+{
+	unsigned int i;
+	int j;
+	i = addr &(~0x0100);
+	for (j = 0; j < 16; j++) {
+
+		if (i & 0x8000)
+			gpio_direction_output(spi_sdo, 1);	
+		else
+			gpio_direction_output(spi_sdo, 0);	
+
+		gpio_direction_output(spi_sclk, 0);	
+		/*udelay(4);*/
+		gpio_direction_output(spi_sclk, 1);	
+		/*udelay(4);*/
+		i <<= 1;
+	}
+	
+} 
+
+static void gpio_lcd_tianma_write_one_data(unsigned short data)
+{
+	unsigned int i;
+	int j;
+
+	i = data | 0x0100;
+
+	for (j = 0; j < 16; j++) {
+
+		if (i & 0x8000)
+			gpio_direction_output(spi_sdo, 1);	
+		else
+			gpio_direction_output(spi_sdo, 0);	
+
+		gpio_direction_output(spi_sclk, 0);	
+		/*udelay(4);*/
+		gpio_direction_output(spi_sclk, 1);	
+		/*udelay(4);*/
+		i <<= 1;
+	}
+
+}
+static void gpio_lcd_tianma_read_one_para(unsigned short addr, unsigned int *data1)
+{
+	
+	int j,i;
+	unsigned int dbit,bits1;		
+	i = addr &(~ 0x0100);
+
+	for (j = 0; j < 16; j++) {
+
+		if (i & 0x8000)
+			gpio_direction_output(spi_sdo, 1);	
+		else
+			gpio_direction_output(spi_sdo, 0);	
+
+		gpio_direction_output(spi_sclk, 0);	
+		gpio_direction_output(spi_sclk, 1);
+		i <<= 1;
+	}
+
+	bits1=0;
+	gpio_direction_input(spi_sdi);
+
+	for (j = 0; j < 8; j++) {
+ 
+	 gpio_direction_output(spi_sclk, 0);
+        dbit=gpio_get_value(spi_sdi);
+        gpio_direction_output(spi_sclk, 1);
+		bits1 = 2*bits1+dbit;
+		
+	}
+	*data1 =  bits1;	
+
+}
+void Get_Tianma_ID(unsigned int *readvalue)
+{
+	unsigned int id=0;
+	SPI_Start(); 
+	gpio_lcd_tianma_read_one_para(0xda,&id);
+	SPI_Stop();	
+	*readvalue=id;
+}
 static void gpio_lcd_truly_emuspi_write_one_index(unsigned short addr)
 {
 	unsigned int i;
@@ -536,9 +630,469 @@ static void gpio_lcd_truly_emuspi_read_one_para(unsigned short addr, unsigned in
 	*data1 =  bits1;	
 
 }
+static void lcdc_boe_init(void)
+{
+gpio_lcd_lead_emuspi_write_cmd(0x1100,0x00);	//Sleep out 
+msleep(120); 	
+
+gpio_lcd_lead_emuspi_write_one_index(0xF000,0x55);//Enable Page 1
+gpio_lcd_lead_emuspi_write_one_index(0xF001,0xAA);
+gpio_lcd_lead_emuspi_write_one_index(0xF002,0x52);
+gpio_lcd_lead_emuspi_write_one_index(0xF003,0x08);
+gpio_lcd_lead_emuspi_write_one_index(0xF004,0x01);
+
+	
+gpio_lcd_lead_emuspi_write_one_index(0xB600,0x34);//AVDD Setting
+gpio_lcd_lead_emuspi_write_one_index(0xB601,0x34);
+gpio_lcd_lead_emuspi_write_one_index(0xB602,0x34);
+gpio_lcd_lead_emuspi_write_one_index(0xB000,0x0c);
+gpio_lcd_lead_emuspi_write_one_index(0xB001,0x0c);
+gpio_lcd_lead_emuspi_write_one_index(0xB002,0x0c);
+
+gpio_lcd_lead_emuspi_write_one_index(0xB700,0x34);//AVEE Setting
+gpio_lcd_lead_emuspi_write_one_index(0xB701,0x34);
+gpio_lcd_lead_emuspi_write_one_index(0xB702,0x34);
+gpio_lcd_lead_emuspi_write_one_index(0xB100,0x0d);
+gpio_lcd_lead_emuspi_write_one_index(0xB101,0x0d);
+gpio_lcd_lead_emuspi_write_one_index(0xB102,0x0d);
+
+gpio_lcd_lead_emuspi_write_one_index(0xB800,0x24);//VCL Setting
+gpio_lcd_lead_emuspi_write_one_index(0xB200,0x00);
+
+gpio_lcd_lead_emuspi_write_one_index(0xBf00,0x01);
+
+gpio_lcd_lead_emuspi_write_one_index(0xB900,0x24);//VGH Setting
+gpio_lcd_lead_emuspi_write_one_index(0xB901,0x24);
+gpio_lcd_lead_emuspi_write_one_index(0xB902,0x24);
+gpio_lcd_lead_emuspi_write_one_index(0xB300,0x05);
+gpio_lcd_lead_emuspi_write_one_index(0xB301,0x05);
+gpio_lcd_lead_emuspi_write_one_index(0xB302,0x05);
+
+gpio_lcd_lead_emuspi_write_one_index(0xBA00,0x34);//VGL Setting
+gpio_lcd_lead_emuspi_write_one_index(0xBA01,0x34);
+gpio_lcd_lead_emuspi_write_one_index(0xBA02,0x34);
+gpio_lcd_lead_emuspi_write_one_index(0xB500,0x0b);
+gpio_lcd_lead_emuspi_write_one_index(0xB501,0x0b);
+gpio_lcd_lead_emuspi_write_one_index(0xB502,0x0b);
+
+
+gpio_lcd_lead_emuspi_write_one_index(0xBC00,0x00);//VGMP Setting	
+gpio_lcd_lead_emuspi_write_one_index(0xBC01,0x80);
+gpio_lcd_lead_emuspi_write_one_index(0xBC02,0x00);
+
+gpio_lcd_lead_emuspi_write_one_index(0xBD00,0x00);//VGMN Setting
+gpio_lcd_lead_emuspi_write_one_index(0xBD01,0x80);
+gpio_lcd_lead_emuspi_write_one_index(0xBD02,0x00);
+
+gpio_lcd_lead_emuspi_write_one_index(0xBE00,0x00);//Vcom Setting
+gpio_lcd_lead_emuspi_write_one_index(0xBE01,0x59);//2
+                                         
+gpio_lcd_lead_emuspi_write_one_index(0xD100,0x00);//Gamma setting R+	
+gpio_lcd_lead_emuspi_write_one_index(0xD101,0X37);
+gpio_lcd_lead_emuspi_write_one_index(0xD102,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xD103,0x53);
+gpio_lcd_lead_emuspi_write_one_index(0xD104,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xD105,0x79);
+gpio_lcd_lead_emuspi_write_one_index(0xD106,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xD107,0x97);
+gpio_lcd_lead_emuspi_write_one_index(0xD108,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xD109,0xb1);
+gpio_lcd_lead_emuspi_write_one_index(0xD10A,0X00);
+gpio_lcd_lead_emuspi_write_one_index(0xD10B,0xd5);
+gpio_lcd_lead_emuspi_write_one_index(0xD10C,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xD10D,0xf4);
+gpio_lcd_lead_emuspi_write_one_index(0xD10E,0x01);
+gpio_lcd_lead_emuspi_write_one_index(0xD10F,0x23);
+gpio_lcd_lead_emuspi_write_one_index(0xD110,0x01);
+gpio_lcd_lead_emuspi_write_one_index(0xD111,0x49);
+gpio_lcd_lead_emuspi_write_one_index(0xD112,0x01);
+gpio_lcd_lead_emuspi_write_one_index(0xD113,0x87);
+gpio_lcd_lead_emuspi_write_one_index(0xD114,0x01);
+gpio_lcd_lead_emuspi_write_one_index(0xD115,0xb6);
+gpio_lcd_lead_emuspi_write_one_index(0xD116,0x02);
+gpio_lcd_lead_emuspi_write_one_index(0xD117,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xD118,0x02);
+gpio_lcd_lead_emuspi_write_one_index(0xD119,0x3b);
+gpio_lcd_lead_emuspi_write_one_index(0xD11A,0x02);
+gpio_lcd_lead_emuspi_write_one_index(0xD11B,0x3d);
+gpio_lcd_lead_emuspi_write_one_index(0xD11C,0x02);
+gpio_lcd_lead_emuspi_write_one_index(0xD11D,0x75);
+gpio_lcd_lead_emuspi_write_one_index(0xD11E,0x02);
+gpio_lcd_lead_emuspi_write_one_index(0xD11F,0xb1);
+gpio_lcd_lead_emuspi_write_one_index(0xD120,0x02);
+gpio_lcd_lead_emuspi_write_one_index(0xD121,0xd5);
+gpio_lcd_lead_emuspi_write_one_index(0xD122,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xD123,0x09);
+gpio_lcd_lead_emuspi_write_one_index(0xD124,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xD125,0x28);
+gpio_lcd_lead_emuspi_write_one_index(0xD126,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xD127,0x52);
+gpio_lcd_lead_emuspi_write_one_index(0xD128,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xD129,0x6B);
+gpio_lcd_lead_emuspi_write_one_index(0xD12A,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xD12B,0x8d);
+gpio_lcd_lead_emuspi_write_one_index(0xD12C,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xD12D,0xA2);
+gpio_lcd_lead_emuspi_write_one_index(0xD12E,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xD12F,0xBb);
+gpio_lcd_lead_emuspi_write_one_index(0xD130,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xD131,0xC1);
+gpio_lcd_lead_emuspi_write_one_index(0xD132,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xD133,0XC1);
+
+
+gpio_lcd_lead_emuspi_write_one_index( 0xD200,0x00);  //g+           
+gpio_lcd_lead_emuspi_write_one_index( 0xD201,0x37);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD202,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD203,0x53);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD204,0x00);              
+gpio_lcd_lead_emuspi_write_one_index( 0xD205,0x79);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD206,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD207,0x97);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD208,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD209,0xB1);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD20A,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD20B,0xD5);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD20C,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD20D,0xF4);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD20E,0x01);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD20F,0x23);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD210,0x01);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD211,0x49);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD212,0x01);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD213,0x87);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD214,0x01);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD215,0xB6);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD216,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD217,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD218,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD219,0x3B);              
+gpio_lcd_lead_emuspi_write_one_index( 0xD21A,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD21B,0x3D);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD21C,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD21D,0x75);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD21E,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD21F,0xB1);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD220,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD221,0xD5);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD222,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD223,0x09);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD224,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD225,0x28);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD226,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD227,0x52);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD228,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD229,0x6B);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD22A,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD22B,0x8D);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD22C,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD22D,0xA2);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD22E,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD22F,0xBB);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD230,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD231,0xC1);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD232,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD233,0xC1); 
+
+
+gpio_lcd_lead_emuspi_write_one_index( 0xD300,0x00);//Gamma setting B+               
+gpio_lcd_lead_emuspi_write_one_index( 0xD301,0x37);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD302,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD303,0x53);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD304,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD305,0x79);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD306,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD307,0x97);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD308,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD309,0xB1);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD30A,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD30B,0xD5);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD30C,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD30D,0xF4);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD30E,0x01);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD30F,0x23);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD310,0x01);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD311,0x49);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD312,0x01);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD313,0x87);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD314,0x01);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD315,0xB6);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD316,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD317,0x00);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD318,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD319,0x3B);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD31A,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD31B,0x3D);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD31C,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD31D,0x75);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD31E,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD31F,0xB1);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD320,0x02);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD321,0xD5);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD322,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD323,0x09);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD324,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD325,0x28);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD326,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD327,0x52);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD328,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD329,0x6B);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD32A,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD32B,0x8D);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD32C,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD32D,0xA2);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD32E,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD32F,0xBB);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD330,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD331,0xC1);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD332,0x03);               
+gpio_lcd_lead_emuspi_write_one_index( 0xD333,0xC1);  
+
+	
+gpio_lcd_lead_emuspi_write_one_index( 0xD400,0x00 );  //Gamma setting R-             
+gpio_lcd_lead_emuspi_write_one_index( 0xD401,0x37 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD402,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD403,0x53 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD404,0x00 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD405,0x79 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD406,0x00 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD407,0x97 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD408,0x00 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD409,0xB1 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD40A,0x00 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD40B,0xD5 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD40C,0x00 );             
+gpio_lcd_lead_emuspi_write_one_index( 0xD40D,0xF4 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD40E,0x01 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD40F,0x23 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD410,0x01 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD411,0x49 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD412,0x01 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD413,0x87 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD414,0x01 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD415,0xB6 );             
+gpio_lcd_lead_emuspi_write_one_index( 0xD416,0x02 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD417,0x00 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD418,0x02 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD419,0x3B );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD41A,0x02 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD41B,0x3D );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD41C,0x02 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD41D,0x75 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD41E,0x02 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD41F,0xB1 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD420,0x02 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD421,0xD5 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD422,0x03 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD423,0x09 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD424,0x03 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD425,0x28 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD426,0x03 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD427,0x52 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD428,0x03 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD429,0x6B );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD42A,0x03 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD42B,0x8D );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD42C,0x03 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD42D,0xA2 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD42E,0x03 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD42F,0xBB );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD430,0x03 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD431,0xC1 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD432,0x03 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD433,0xC1 );
+
+gpio_lcd_lead_emuspi_write_one_index( 0xD500,0x00 );   //Gamma setting G-           
+gpio_lcd_lead_emuspi_write_one_index( 0xD501,0x37 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD502,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD503,0x53 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD504,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD505,0x79 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD506,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD507,0x97 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD508,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD509,0xB1 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD50A,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD50B,0xD5 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD50C,0x00 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD50D,0xF4 );              
+gpio_lcd_lead_emuspi_write_one_index( 0xD50E,0x01 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD50F,0x23 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD510,0x01 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD511,0x49 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD512,0x01 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD513,0x87 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD514,0x01 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD515,0xB6 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD516,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD517,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD518,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD519,0x3B );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD51A,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD51B,0x3D );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD51C,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD51D,0x75 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD51E,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD51F,0xB1 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD520,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD521,0xD5 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD522,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD523,0x09 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD524,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD525,0x28 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD526,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD527,0x52 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD528,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD529,0x6B );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD52A,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD52B,0x8D );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD52C,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD52D,0xA2 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD52E,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD52F,0xBB );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD530,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD531,0xC1 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD532,0x03 );                
+gpio_lcd_lead_emuspi_write_one_index( 0xD533,0xC1 ); 
+
+
+gpio_lcd_lead_emuspi_write_one_index( 0xD600,0x00 );  //Gamma setting B-            
+gpio_lcd_lead_emuspi_write_one_index( 0xD601,0x37 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD602,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD603,0x53 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD604,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD605,0x79 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD606,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD607,0x97 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD608,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD609,0xB1 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD60A,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD60B,0xD5 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD60C,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD60D,0xF4 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD60E,0x01 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD60F,0x23 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD610,0x01 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD611,0x49 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD612,0x01 );            
+gpio_lcd_lead_emuspi_write_one_index( 0xD613,0x87 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD614,0x01 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD615,0xB6 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD616,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD617,0x00 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD618,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD619,0x3B );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD61A,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD61B,0x3D );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD61C,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD61D,0x75 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD61E,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD61F,0xB1 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD620,0x02 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD621,0xD5 );                
+gpio_lcd_lead_emuspi_write_one_index( 0xD622,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD623,0x09 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD624,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD625,0x28 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD626,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD627,0x52 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD628,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD629,0x6B );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD62A,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD62B,0x8D );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD62C,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD62D,0xA2 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD62E,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD62F,0xBB );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD630,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD631,0xC1 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD632,0x03 );               
+gpio_lcd_lead_emuspi_write_one_index( 0xD633,0xC1 ); 
+
+                                   
+gpio_lcd_lead_emuspi_write_one_index(0xF000,0x55);//Enable Page 0	
+gpio_lcd_lead_emuspi_write_one_index(0xF001,0xAA);
+gpio_lcd_lead_emuspi_write_one_index(0xF002,0x52);
+gpio_lcd_lead_emuspi_write_one_index(0xF003,0x08);
+gpio_lcd_lead_emuspi_write_one_index(0xF004,0x00);
+   
+gpio_lcd_lead_emuspi_write_one_index(0xB400,0x10);
+                                          
+gpio_lcd_lead_emuspi_write_one_index(0xB000,0x08); //RGB I/F Setting
+gpio_lcd_lead_emuspi_write_one_index(0xB001,0x05);
+gpio_lcd_lead_emuspi_write_one_index(0xB002,0x02);
+gpio_lcd_lead_emuspi_write_one_index(0xB003,0x05);
+gpio_lcd_lead_emuspi_write_one_index(0xB004,0x02);
+
+gpio_lcd_lead_emuspi_write_one_index(0xB600,0x05);//SDT
+
+
+gpio_lcd_lead_emuspi_write_one_index(0xB700,0x00);//Gate EQ 
+gpio_lcd_lead_emuspi_write_one_index(0xB701,0x00);//Gate EQ 
+
+gpio_lcd_lead_emuspi_write_one_index(0xBa00,0x01);//new add
+
+gpio_lcd_lead_emuspi_write_one_index(0xB800,0x01);//Source EQ 
+gpio_lcd_lead_emuspi_write_one_index(0xB801,0x05);
+gpio_lcd_lead_emuspi_write_one_index(0xB802,0x05);
+gpio_lcd_lead_emuspi_write_one_index(0xB803,0x05);
+
+
+//gpio_lcd_lead_emuspi_write_one_index(0xB100,0xCC);//RAM Keep	
+
+
+                                          
+gpio_lcd_lead_emuspi_write_one_index(0xBC00,0x00);//Column Inversion
+gpio_lcd_lead_emuspi_write_one_index(0xBC01,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xBC02,0x00);
+                                       
+gpio_lcd_lead_emuspi_write_one_index(0xCC00,0x03);//BOE Setting 
+gpio_lcd_lead_emuspi_write_one_index(0xCC01,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xCC02,0x00);
+
+
+gpio_lcd_lead_emuspi_write_one_index(0xBD00,0x01);//Porch Lines	
+gpio_lcd_lead_emuspi_write_one_index(0xBD01,0x84);
+gpio_lcd_lead_emuspi_write_one_index(0xBD02,0x07);	
+gpio_lcd_lead_emuspi_write_one_index(0xBD03,0x31);
+gpio_lcd_lead_emuspi_write_one_index(0xBD04,0x00);
+
+/*										  
+gpio_lcd_lead_emuspi_write_one_index(0xBD02,0x07);//Porch Lines	
+gpio_lcd_lead_emuspi_write_one_index(0xBD03,0x31);
+gpio_lcd_lead_emuspi_write_one_index(0xBE02,0x07);
+gpio_lcd_lead_emuspi_write_one_index(0xBE03,0x31);
+gpio_lcd_lead_emuspi_write_one_index(0xBF02,0x07);
+gpio_lcd_lead_emuspi_write_one_index(0xBF03,0x31);
+*/
+                                          
+gpio_lcd_lead_emuspi_write_one_index(0xFF00,0xAA);
+gpio_lcd_lead_emuspi_write_one_index(0xFF01,0x55);
+gpio_lcd_lead_emuspi_write_one_index(0xFF02,0x25);
+gpio_lcd_lead_emuspi_write_one_index(0xFF03,0x01);
+                                          
+//gpio_lcd_lead_emuspi_write_one_index(0xF304,0x11);
+//gpio_lcd_lead_emuspi_write_one_index(0xF306,0x10);
+//gpio_lcd_lead_emuspi_write_one_index(0xF408,0x00);
+                                          
+gpio_lcd_lead_emuspi_write_one_index(0x3500,0x00);//
+//gpio_lcd_lead_emuspi_write_one_index(0x3600,0XD4);
+gpio_lcd_lead_emuspi_write_one_index(0x3A00,0x66);//18 bits
+//gpio_lcd_lead_emuspi_write_one_index(0x3B00,0x28);   
+	  
+
+gpio_lcd_lead_emuspi_write_cmd(0x2900,0x00);	//Display on	
+msleep(60);
+gpio_lcd_lead_emuspi_write_cmd(0x2c00,0x00);
+
+	
+}
 static void lcdc_lead_init(void)
 {
-	gpio_lcd_lead_emuspi_write_one_index(0xF000,0x55);//Enable Page 1
+gpio_lcd_lead_emuspi_write_cmd(0x1100,0x00);	//Sleep out 
+msleep(120); 	
+
+gpio_lcd_lead_emuspi_write_one_index(0xF000,0x55);//Enable Page 1
 gpio_lcd_lead_emuspi_write_one_index(0xF001,0xAA);
 gpio_lcd_lead_emuspi_write_one_index(0xF002,0x52);
 gpio_lcd_lead_emuspi_write_one_index(0xF003,0x08);
@@ -869,10 +1423,13 @@ gpio_lcd_lead_emuspi_write_one_index(0xD630,0x03);
 gpio_lcd_lead_emuspi_write_one_index(0xD631,0xC7);
 gpio_lcd_lead_emuspi_write_one_index(0xD632,0x03);
 gpio_lcd_lead_emuspi_write_one_index(0xD633,0XCC);
+
+gpio_lcd_lead_emuspi_write_one_index(0xB600,0X44);   //Add for AVDD Pump
+gpio_lcd_lead_emuspi_write_one_index(0xB700,0X34);   //Add for AVEE Pump
                                           
-gpio_lcd_lead_emuspi_write_one_index(0xB000,0X12);//AVDD Voltage Setting	
-gpio_lcd_lead_emuspi_write_one_index(0xB001,0X12);
-gpio_lcd_lead_emuspi_write_one_index(0xB002,0X12);
+gpio_lcd_lead_emuspi_write_one_index(0xB000,0X0A);//0x12 AVDD Voltage Setting	
+gpio_lcd_lead_emuspi_write_one_index(0xB001,0X0A);
+gpio_lcd_lead_emuspi_write_one_index(0xB002,0X0A);
                                           
 gpio_lcd_lead_emuspi_write_one_index(0xB100,0X0A);//AVEE Voltage Setting	
 gpio_lcd_lead_emuspi_write_one_index(0xB101,0X0A);
@@ -891,7 +1448,7 @@ gpio_lcd_lead_emuspi_write_one_index(0xF001,0xAA);
 gpio_lcd_lead_emuspi_write_one_index(0xF002,0x52);
 gpio_lcd_lead_emuspi_write_one_index(0xF003,0x08);
 gpio_lcd_lead_emuspi_write_one_index(0xF004,0x00);
-
+                                          
 gpio_lcd_lead_emuspi_write_one_index(0xB000,0x08);
 gpio_lcd_lead_emuspi_write_one_index(0xB100,0xCC);//RAM Keep	
                                           
@@ -901,8 +1458,8 @@ gpio_lcd_lead_emuspi_write_one_index(0xBC02,0x05);
                                          
 gpio_lcd_lead_emuspi_write_one_index(0xB800,0x01);//Source EQ 
 
-gpio_lcd_lead_emuspi_write_one_index(0xB700,0x55);//Source EQ 
-gpio_lcd_lead_emuspi_write_one_index(0xB701,0x55);//Source EQ 
+gpio_lcd_lead_emuspi_write_one_index(0xB700,0x70);//Gate EQ 
+gpio_lcd_lead_emuspi_write_one_index(0xB701,0x70);//Gate EQ 
                                           
 gpio_lcd_lead_emuspi_write_one_index(0xBD02,0x07);//Porch Lines	
 gpio_lcd_lead_emuspi_write_one_index(0xBD03,0x31);
@@ -924,17 +1481,479 @@ gpio_lcd_lead_emuspi_write_one_index(0x3500,0x00);
 //gpio_lcd_lead_emuspi_write_one_index(0x3600,0XD4);
 gpio_lcd_lead_emuspi_write_one_index(0x3A00,0x66);
 //gpio_lcd_lead_emuspi_write_one_index(0x3B00,0x28);   	  
-    	  
-gpio_lcd_lead_emuspi_write_cmd(0x1100,0x00);	//Sleep out	
-msleep(80); 	
+
 gpio_lcd_lead_emuspi_write_cmd(0x2900,0x00);	//Display on	
 msleep(60);
 gpio_lcd_lead_emuspi_write_cmd(0x2c00,0x00);
 
 	
 }
+static void lcdc_lead_rm68120_init(void)
+{
+//gamma2.2
+gpio_lcd_lead_emuspi_write_one_index(0x1100,0x00);	   //Sleep out 
+msleep(120);
+
+gpio_lcd_lead_emuspi_write_one_index(0xF000,0x55);//Enable Page 1 
+gpio_lcd_lead_emuspi_write_one_index(0xF001,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xF002,0x52); 
+gpio_lcd_lead_emuspi_write_one_index(0xF003,0x08); 
+gpio_lcd_lead_emuspi_write_one_index(0xF004,0x01); 
+                                                                          
+gpio_lcd_lead_emuspi_write_one_index(0xB600,0x44); 
+gpio_lcd_lead_emuspi_write_one_index(0xB601,0x44); 
+gpio_lcd_lead_emuspi_write_one_index(0xB602,0x44); 
+gpio_lcd_lead_emuspi_write_one_index(0xB700,0x34); 
+gpio_lcd_lead_emuspi_write_one_index(0xB701,0x34); 
+gpio_lcd_lead_emuspi_write_one_index(0xB702,0x34); 
+
+gpio_lcd_lead_emuspi_write_one_index(0xB800,0x24); 	// 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xB801,0x24); 	// 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xB802,0x24); 	// 20120202 Raydium
+
+gpio_lcd_lead_emuspi_write_one_index(0xB000,0x00); // 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xB001,0x00); // 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xB002,0x00);// 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xB100,0x05);// 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xB101,0x05);// 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xB102,0x05);// 20120202 Raydium
+
+gpio_lcd_lead_emuspi_write_one_index(0xBA00,0x14);
+gpio_lcd_lead_emuspi_write_one_index(0xBA01,0x14);
+gpio_lcd_lead_emuspi_write_one_index(0xBA02,0x14);
+
+gpio_lcd_lead_emuspi_write_one_index(0xB900,0x34);// 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xB901,0x34);// 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xB902,0x34);// 20120202 Raydium
+
+gpio_lcd_lead_emuspi_write_one_index(0xBC00,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xBC01,0xB8);
+gpio_lcd_lead_emuspi_write_one_index(0xBC02,0x00);	// 20120202 Raydium
+
+gpio_lcd_lead_emuspi_write_one_index(0xBD00,0x00);
+gpio_lcd_lead_emuspi_write_one_index(0xBD01,0xB8);
+gpio_lcd_lead_emuspi_write_one_index(0xBD02,0x00);	// 20120202 Raydium
+
+gpio_lcd_lead_emuspi_write_one_index(0xBE00,0x00);	// 20120202 Raydium
+gpio_lcd_lead_emuspi_write_one_index(0xBE01,0x58);	//test 
+
+gpio_lcd_lead_emuspi_write_one_index(0xF000,0x55);//Enable Page 0  
+gpio_lcd_lead_emuspi_write_one_index(0xF001,0xAA);
+gpio_lcd_lead_emuspi_write_one_index(0xF002,0x52);
+gpio_lcd_lead_emuspi_write_one_index(0xF003,0x08);
+gpio_lcd_lead_emuspi_write_one_index(0xF004,0x00);
+
+gpio_lcd_lead_emuspi_write_one_index(0xB400,0x10);
+gpio_lcd_lead_emuspi_write_one_index(0xB000,0x08);//pan 0x03//liuchunhai  changed for v h p plar //ZTE
+gpio_lcd_lead_emuspi_write_one_index(0xB100,0xCC);//RAM Keep	ZTE
+gpio_lcd_lead_emuspi_write_one_index(0xB101,0x00);//0x06 flip  //RAM Keep	ZTE
+
+gpio_lcd_lead_emuspi_write_one_index(0xBC00,0x05);
+gpio_lcd_lead_emuspi_write_one_index(0xBC01,0x05);
+gpio_lcd_lead_emuspi_write_one_index(0xBC02,0x05);
+
+gpio_lcd_lead_emuspi_write_one_index(0xD000,0x01);//0x20
+
+gpio_lcd_lead_emuspi_write_one_index(0xBA00,0x01);//0x01 PRG=0;0x05 PRG=1
+gpio_lcd_lead_emuspi_write_one_index(0xB300,0x00);//EXTERNAL CLK
+
+gpio_lcd_lead_emuspi_write_one_index(0xF000,0x55);//Enable Page 2 
+gpio_lcd_lead_emuspi_write_one_index(0xF001,0xAA);
+gpio_lcd_lead_emuspi_write_one_index(0xF002,0x52);
+gpio_lcd_lead_emuspi_write_one_index(0xF003,0x08);
+gpio_lcd_lead_emuspi_write_one_index(0xF004,0x02);
+
+gpio_lcd_lead_emuspi_write_one_index(0xC301,0xA9);
+
+gpio_lcd_lead_emuspi_write_one_index(0xFE01,0x94);
+
+gpio_lcd_lead_emuspi_write_one_index(0xF600,0x60);
+
+gpio_lcd_lead_emuspi_write_one_index(0xF000,0x55);  //page 1
+gpio_lcd_lead_emuspi_write_one_index(0xF001,0xAA);
+gpio_lcd_lead_emuspi_write_one_index(0xF002,0x52);
+gpio_lcd_lead_emuspi_write_one_index(0xF003,0x08);
+gpio_lcd_lead_emuspi_write_one_index(0xF004,0x01);
+         
+gpio_lcd_lead_emuspi_write_one_index(0xD100,0x00);//Gamma setting Red         
+gpio_lcd_lead_emuspi_write_one_index(0xD101,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD102,0x22); 
+gpio_lcd_lead_emuspi_write_one_index(0xD103,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD104,0x78); 
+gpio_lcd_lead_emuspi_write_one_index(0xD105,0x40); 
+gpio_lcd_lead_emuspi_write_one_index(0xD106,0x93); 
+gpio_lcd_lead_emuspi_write_one_index(0xD107,0xBF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD108,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD109,0x10); 
+gpio_lcd_lead_emuspi_write_one_index(0xD10A,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD10B,0x33); 
+gpio_lcd_lead_emuspi_write_one_index(0xD10C,0x4F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD10D,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD10E,0x7A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD10F,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD110,0x8C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD111,0x9C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD112,0xA9); 
+gpio_lcd_lead_emuspi_write_one_index(0xD113,0xB6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD114,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD115,0xC2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD116,0xCE); 
+gpio_lcd_lead_emuspi_write_one_index(0xD117,0xD8); 
+gpio_lcd_lead_emuspi_write_one_index(0xD118,0xE2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD119,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD11A,0xEC); 
+gpio_lcd_lead_emuspi_write_one_index(0xD11B,0xED); 
+gpio_lcd_lead_emuspi_write_one_index(0xD11C,0xF6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD11D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD11E,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD11F,0x07); 
+gpio_lcd_lead_emuspi_write_one_index(0xD120,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD121,0x17); 
+gpio_lcd_lead_emuspi_write_one_index(0xD122,0x20); 
+gpio_lcd_lead_emuspi_write_one_index(0xD123,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD124,0x28); 
+gpio_lcd_lead_emuspi_write_one_index(0xD125,0x30); 
+gpio_lcd_lead_emuspi_write_one_index(0xD126,0x3A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD127,0x44); 
+gpio_lcd_lead_emuspi_write_one_index(0xD128,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD129,0x52); 
+gpio_lcd_lead_emuspi_write_one_index(0xD12A,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD12B,0x86); 
+gpio_lcd_lead_emuspi_write_one_index(0xD12C,0xC5); 
+gpio_lcd_lead_emuspi_write_one_index(0xD12D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD12E,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD12F,0x51); 
+gpio_lcd_lead_emuspi_write_one_index(0xD130,0x8D); 
+gpio_lcd_lead_emuspi_write_one_index(0xD131,0xC4); 
+gpio_lcd_lead_emuspi_write_one_index(0xD132,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD133,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD134,0xFF);
+                                          
+gpio_lcd_lead_emuspi_write_one_index(0xD200,0x00);//Gamma setting Green        
+gpio_lcd_lead_emuspi_write_one_index(0xD201,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD202,0x22); 
+gpio_lcd_lead_emuspi_write_one_index(0xD203,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD204,0x78); 
+gpio_lcd_lead_emuspi_write_one_index(0xD205,0x40); 
+gpio_lcd_lead_emuspi_write_one_index(0xD206,0x93); 
+gpio_lcd_lead_emuspi_write_one_index(0xD207,0xBF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD208,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD209,0x10); 
+gpio_lcd_lead_emuspi_write_one_index(0xD20A,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD20B,0x33); 
+gpio_lcd_lead_emuspi_write_one_index(0xD20C,0x4F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD20D,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD20E,0x7A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD20F,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD210,0x8C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD211,0x9C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD212,0xA9); 
+gpio_lcd_lead_emuspi_write_one_index(0xD213,0xB6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD214,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD215,0xC2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD216,0xCE); 
+gpio_lcd_lead_emuspi_write_one_index(0xD217,0xD8); 
+gpio_lcd_lead_emuspi_write_one_index(0xD218,0xE2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD219,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD21A,0xEC); 
+gpio_lcd_lead_emuspi_write_one_index(0xD21B,0xED); 
+gpio_lcd_lead_emuspi_write_one_index(0xD21C,0xF6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD21D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD21E,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD21F,0x07); 
+gpio_lcd_lead_emuspi_write_one_index(0xD220,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD221,0x17); 
+gpio_lcd_lead_emuspi_write_one_index(0xD222,0x20); 
+gpio_lcd_lead_emuspi_write_one_index(0xD223,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD224,0x28); 
+gpio_lcd_lead_emuspi_write_one_index(0xD225,0x30); 
+gpio_lcd_lead_emuspi_write_one_index(0xD226,0x3A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD227,0x44); 
+gpio_lcd_lead_emuspi_write_one_index(0xD228,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD229,0x52); 
+gpio_lcd_lead_emuspi_write_one_index(0xD22A,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD22B,0x86); 
+gpio_lcd_lead_emuspi_write_one_index(0xD22C,0xC5); 
+gpio_lcd_lead_emuspi_write_one_index(0xD22D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD22E,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD22F,0x51); 
+gpio_lcd_lead_emuspi_write_one_index(0xD230,0x8D); 
+gpio_lcd_lead_emuspi_write_one_index(0xD231,0xC4); 
+gpio_lcd_lead_emuspi_write_one_index(0xD232,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD233,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD234,0xFF);
+                                
+gpio_lcd_lead_emuspi_write_one_index(0xD300,0x00);//Gamma setting Blue       
+gpio_lcd_lead_emuspi_write_one_index(0xD301,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD302,0x22); 
+gpio_lcd_lead_emuspi_write_one_index(0xD303,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD304,0x78); 
+gpio_lcd_lead_emuspi_write_one_index(0xD305,0x40); 
+gpio_lcd_lead_emuspi_write_one_index(0xD306,0x93); 
+gpio_lcd_lead_emuspi_write_one_index(0xD307,0xBF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD308,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD309,0x10); 
+gpio_lcd_lead_emuspi_write_one_index(0xD30A,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD30B,0x33); 
+gpio_lcd_lead_emuspi_write_one_index(0xD30C,0x4F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD30D,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD30E,0x7A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD30F,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD310,0x8C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD311,0x9C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD312,0xA9); 
+gpio_lcd_lead_emuspi_write_one_index(0xD313,0xB6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD314,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD315,0xC2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD316,0xCE); 
+gpio_lcd_lead_emuspi_write_one_index(0xD317,0xD8); 
+gpio_lcd_lead_emuspi_write_one_index(0xD318,0xE2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD319,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD31A,0xEC); 
+gpio_lcd_lead_emuspi_write_one_index(0xD31B,0xED); 
+gpio_lcd_lead_emuspi_write_one_index(0xD31C,0xF6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD31D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD31E,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD31F,0x07); 
+gpio_lcd_lead_emuspi_write_one_index(0xD320,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD321,0x17); 
+gpio_lcd_lead_emuspi_write_one_index(0xD322,0x20); 
+gpio_lcd_lead_emuspi_write_one_index(0xD323,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD324,0x28); 
+gpio_lcd_lead_emuspi_write_one_index(0xD325,0x30); 
+gpio_lcd_lead_emuspi_write_one_index(0xD326,0x3A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD327,0x44); 
+gpio_lcd_lead_emuspi_write_one_index(0xD328,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD329,0x52); 
+gpio_lcd_lead_emuspi_write_one_index(0xD32A,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD32B,0x86); 
+gpio_lcd_lead_emuspi_write_one_index(0xD32C,0xC5); 
+gpio_lcd_lead_emuspi_write_one_index(0xD32D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD32E,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD32F,0x51); 
+gpio_lcd_lead_emuspi_write_one_index(0xD330,0x8D); 
+gpio_lcd_lead_emuspi_write_one_index(0xD331,0xC4); 
+gpio_lcd_lead_emuspi_write_one_index(0xD332,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD333,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD334,0xFF);
+
+gpio_lcd_lead_emuspi_write_one_index(0xD400,0x00);//Gamma setting Red         
+gpio_lcd_lead_emuspi_write_one_index(0xD401,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD402,0x22); 
+gpio_lcd_lead_emuspi_write_one_index(0xD403,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD404,0x78); 
+gpio_lcd_lead_emuspi_write_one_index(0xD405,0x40); 
+gpio_lcd_lead_emuspi_write_one_index(0xD406,0x93); 
+gpio_lcd_lead_emuspi_write_one_index(0xD407,0xBF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD408,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD409,0x10); 
+gpio_lcd_lead_emuspi_write_one_index(0xD40A,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD40B,0x33); 
+gpio_lcd_lead_emuspi_write_one_index(0xD40C,0x4F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD40D,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD40E,0x7A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD40F,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD410,0x8C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD411,0x9C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD412,0xA9); 
+gpio_lcd_lead_emuspi_write_one_index(0xD413,0xB6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD414,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD415,0xC2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD416,0xCE); 
+gpio_lcd_lead_emuspi_write_one_index(0xD417,0xD8); 
+gpio_lcd_lead_emuspi_write_one_index(0xD418,0xE2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD419,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD41A,0xEC); 
+gpio_lcd_lead_emuspi_write_one_index(0xD41B,0xED); 
+gpio_lcd_lead_emuspi_write_one_index(0xD41C,0xF6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD41D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD41E,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD41F,0x07); 
+gpio_lcd_lead_emuspi_write_one_index(0xD420,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD421,0x17); 
+gpio_lcd_lead_emuspi_write_one_index(0xD422,0x20); 
+gpio_lcd_lead_emuspi_write_one_index(0xD423,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD424,0x28); 
+gpio_lcd_lead_emuspi_write_one_index(0xD425,0x30); 
+gpio_lcd_lead_emuspi_write_one_index(0xD426,0x3A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD427,0x44); 
+gpio_lcd_lead_emuspi_write_one_index(0xD428,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD429,0x52); 
+gpio_lcd_lead_emuspi_write_one_index(0xD42A,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD42B,0x86); 
+gpio_lcd_lead_emuspi_write_one_index(0xD42C,0xC5); 
+gpio_lcd_lead_emuspi_write_one_index(0xD42D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD42E,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD42F,0x51); 
+gpio_lcd_lead_emuspi_write_one_index(0xD430,0x8D); 
+gpio_lcd_lead_emuspi_write_one_index(0xD431,0xC4); 
+gpio_lcd_lead_emuspi_write_one_index(0xD432,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD433,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD434,0xFF);
+
+gpio_lcd_lead_emuspi_write_one_index(0xD500,0x00);//Gamma setting Green        
+gpio_lcd_lead_emuspi_write_one_index(0xD501,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD502,0x22); 
+gpio_lcd_lead_emuspi_write_one_index(0xD503,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD504,0x78); 
+gpio_lcd_lead_emuspi_write_one_index(0xD505,0x40); 
+gpio_lcd_lead_emuspi_write_one_index(0xD506,0x93); 
+gpio_lcd_lead_emuspi_write_one_index(0xD507,0xBF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD508,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD509,0x10); 
+gpio_lcd_lead_emuspi_write_one_index(0xD50A,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD50B,0x33); 
+gpio_lcd_lead_emuspi_write_one_index(0xD50C,0x4F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD50D,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD50E,0x7A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD50F,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD510,0x8C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD511,0x9C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD512,0xA9); 
+gpio_lcd_lead_emuspi_write_one_index(0xD513,0xB6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD514,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD515,0xC2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD516,0xCE); 
+gpio_lcd_lead_emuspi_write_one_index(0xD517,0xD8); 
+gpio_lcd_lead_emuspi_write_one_index(0xD518,0xE2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD519,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD51A,0xEC); 
+gpio_lcd_lead_emuspi_write_one_index(0xD51B,0xED); 
+gpio_lcd_lead_emuspi_write_one_index(0xD51C,0xF6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD51D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD51E,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD51F,0x07); 
+gpio_lcd_lead_emuspi_write_one_index(0xD520,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD521,0x17); 
+gpio_lcd_lead_emuspi_write_one_index(0xD522,0x20); 
+gpio_lcd_lead_emuspi_write_one_index(0xD523,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD524,0x28); 
+gpio_lcd_lead_emuspi_write_one_index(0xD525,0x30); 
+gpio_lcd_lead_emuspi_write_one_index(0xD526,0x3A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD527,0x44); 
+gpio_lcd_lead_emuspi_write_one_index(0xD528,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD529,0x52); 
+gpio_lcd_lead_emuspi_write_one_index(0xD52A,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD52B,0x86); 
+gpio_lcd_lead_emuspi_write_one_index(0xD52C,0xC5); 
+gpio_lcd_lead_emuspi_write_one_index(0xD52D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD52E,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD52F,0x51); 
+gpio_lcd_lead_emuspi_write_one_index(0xD530,0x8D); 
+gpio_lcd_lead_emuspi_write_one_index(0xD531,0xC4); 
+gpio_lcd_lead_emuspi_write_one_index(0xD532,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD533,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD534,0xFF);
+
+gpio_lcd_lead_emuspi_write_one_index(0xD600,0x00);//Gamma setting Blue       
+gpio_lcd_lead_emuspi_write_one_index(0xD601,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD602,0x22); 
+gpio_lcd_lead_emuspi_write_one_index(0xD603,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD604,0x78); 
+gpio_lcd_lead_emuspi_write_one_index(0xD605,0x40); 
+gpio_lcd_lead_emuspi_write_one_index(0xD606,0x93); 
+gpio_lcd_lead_emuspi_write_one_index(0xD607,0xBF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD608,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD609,0x10); 
+gpio_lcd_lead_emuspi_write_one_index(0xD60A,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD60B,0x33); 
+gpio_lcd_lead_emuspi_write_one_index(0xD60C,0x4F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD60D,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD60E,0x7A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD60F,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD610,0x8C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD611,0x9C); 
+gpio_lcd_lead_emuspi_write_one_index(0xD612,0xA9); 
+gpio_lcd_lead_emuspi_write_one_index(0xD613,0xB6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD614,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD615,0xC2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD616,0xCE); 
+gpio_lcd_lead_emuspi_write_one_index(0xD617,0xD8); 
+gpio_lcd_lead_emuspi_write_one_index(0xD618,0xE2); 
+gpio_lcd_lead_emuspi_write_one_index(0xD619,0x55); 
+gpio_lcd_lead_emuspi_write_one_index(0xD61A,0xEC); 
+gpio_lcd_lead_emuspi_write_one_index(0xD61B,0xED); 
+gpio_lcd_lead_emuspi_write_one_index(0xD61C,0xF6); 
+gpio_lcd_lead_emuspi_write_one_index(0xD61D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD61E,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD61F,0x07); 
+gpio_lcd_lead_emuspi_write_one_index(0xD620,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD621,0x17); 
+gpio_lcd_lead_emuspi_write_one_index(0xD622,0x20); 
+gpio_lcd_lead_emuspi_write_one_index(0xD623,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD624,0x28); 
+gpio_lcd_lead_emuspi_write_one_index(0xD625,0x30); 
+gpio_lcd_lead_emuspi_write_one_index(0xD626,0x3A); 
+gpio_lcd_lead_emuspi_write_one_index(0xD627,0x44); 
+gpio_lcd_lead_emuspi_write_one_index(0xD628,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xD629,0x52); 
+gpio_lcd_lead_emuspi_write_one_index(0xD62A,0x66); 
+gpio_lcd_lead_emuspi_write_one_index(0xD62B,0x86); 
+gpio_lcd_lead_emuspi_write_one_index(0xD62C,0xC5); 
+gpio_lcd_lead_emuspi_write_one_index(0xD62D,0xFF); 
+gpio_lcd_lead_emuspi_write_one_index(0xD62E,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0xD62F,0x51); 
+gpio_lcd_lead_emuspi_write_one_index(0xD630,0x8D); 
+gpio_lcd_lead_emuspi_write_one_index(0xD631,0xC4); 
+gpio_lcd_lead_emuspi_write_one_index(0xD632,0x0F); 
+gpio_lcd_lead_emuspi_write_one_index(0xD633,0xE0); 
+gpio_lcd_lead_emuspi_write_one_index(0xD634,0xFF);
+
+
+gpio_lcd_lead_emuspi_write_one_index(0xF000,0x55);//Enable Page 0         
+gpio_lcd_lead_emuspi_write_one_index(0xF001,0xAA); 
+gpio_lcd_lead_emuspi_write_one_index(0xF002,0x52); 
+gpio_lcd_lead_emuspi_write_one_index(0xF003,0x08); 
+gpio_lcd_lead_emuspi_write_one_index(0xF004,0x00); 
+
+gpio_lcd_lead_emuspi_write_one_index(0xB600,0x02); 
+
+gpio_lcd_lead_emuspi_write_one_index(0xB700,0x22);//GATE EQ CONTROL	
+gpio_lcd_lead_emuspi_write_one_index(0xB701,0x22);//GATE EQ CONTROL	
+
+
+gpio_lcd_lead_emuspi_write_one_index(0xC80B,0x2A);//DISPLAY TIMING CONTROL
+gpio_lcd_lead_emuspi_write_one_index(0xC80C,0x2A);//DISPLAY TIMING CONTROL
+gpio_lcd_lead_emuspi_write_one_index(0xC80F,0x2A);//DISPLAY TIMING CONTROL
+gpio_lcd_lead_emuspi_write_one_index(0xC810,0x2A);//DISPLAY TIMING CONTROL
+
+gpio_lcd_lead_emuspi_write_one_index(0xB800,0x01);
+gpio_lcd_lead_emuspi_write_one_index(0xB801,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xB802,0x03);
+gpio_lcd_lead_emuspi_write_one_index(0xB803,0x03);
+
+
+                                         
+gpio_lcd_lead_emuspi_write_one_index(0xBD02,0x07);//Porch Lines         
+
+gpio_lcd_lead_emuspi_write_one_index(0xBE02,0x07); 
+
+gpio_lcd_lead_emuspi_write_one_index(0xBF02,0x07); 
+
+
+
+//*****************CABC ON***************//
+
+gpio_lcd_lead_emuspi_write_one_index(0x5300,0x26);
+gpio_lcd_lead_emuspi_write_one_index(0x5100,0x00);
+
+//*****************CABC ON***************//
+                                          
+gpio_lcd_lead_emuspi_write_one_index(0x3500,0x00); 
+gpio_lcd_lead_emuspi_write_one_index(0x3A00,0x66);     
+
+      
+gpio_lcd_lead_emuspi_write_one_index(0x2900,0x00);        //Display on         
+msleep(60); 
+
+
+gpio_lcd_lead_emuspi_write_one_index(0x2c00,0x00); 
+
+	
+}
 void lcdc_truly_init(void)
 {	//for LG+Hx8369
+ #if 0
 	SPI_Start(); 
 	gpio_lcd_truly_emuspi_write_one_index(0xB9);  // SET password 
         gpio_lcd_truly_emuspi_write_one_data(0xFF);   
@@ -1241,9 +2260,336 @@ void lcdc_truly_init(void)
 	SPI_Stop(); 
 */
 	//dprintf(1,"[hp@lcd&fb]:lcd module init exit\n!");
+#endif
+
+#if 1
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0xB9); //Set_EXTC 
+gpio_lcd_truly_emuspi_write_one_data(0xFF);           
+gpio_lcd_truly_emuspi_write_one_data(0x83);           
+gpio_lcd_truly_emuspi_write_one_data(0x69);    
+SPI_Stop(); 
+
+
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0xB1);  //Set Power 
+gpio_lcd_truly_emuspi_write_one_data(0x01); 
+gpio_lcd_truly_emuspi_write_one_data(0x00); 
+gpio_lcd_truly_emuspi_write_one_data(0x34); 
+gpio_lcd_truly_emuspi_write_one_data(0x07); 
+gpio_lcd_truly_emuspi_write_one_data(0x00); 
+gpio_lcd_truly_emuspi_write_one_data(0x0E); 
+gpio_lcd_truly_emuspi_write_one_data(0x0E); 
+gpio_lcd_truly_emuspi_write_one_data(0x1A); 
+gpio_lcd_truly_emuspi_write_one_data(0x22); 
+gpio_lcd_truly_emuspi_write_one_data(0x3F); 
+gpio_lcd_truly_emuspi_write_one_data(0x3F); 
+gpio_lcd_truly_emuspi_write_one_data(0x07); 
+gpio_lcd_truly_emuspi_write_one_data(0x23); 
+gpio_lcd_truly_emuspi_write_one_data(0x01); 
+gpio_lcd_truly_emuspi_write_one_data(0xE6); 
+gpio_lcd_truly_emuspi_write_one_data(0xE6); 
+gpio_lcd_truly_emuspi_write_one_data(0xE6); 
+gpio_lcd_truly_emuspi_write_one_data(0xE6); 
+gpio_lcd_truly_emuspi_write_one_data(0xE6); 
+	SPI_Stop(); 
+
+
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0xB2);  // SET Display  480x800 
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0x2B);   
+gpio_lcd_truly_emuspi_write_one_data(0x0A);   
+gpio_lcd_truly_emuspi_write_one_data(0x0A);   
+gpio_lcd_truly_emuspi_write_one_data(0x70);   
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0xFF);   
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0x03);   
+gpio_lcd_truly_emuspi_write_one_data(0x03);   
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0x01);   
+	SPI_Stop(); 
+
+
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0xB4);  // SET Display CYC 
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0x0C);   
+gpio_lcd_truly_emuspi_write_one_data(0x84); 
+gpio_lcd_truly_emuspi_write_one_data(0x0C);   
+gpio_lcd_truly_emuspi_write_one_data(0x01); 
+	SPI_Stop(); 
+
+
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0xB6);  // SET VCOM 
+gpio_lcd_truly_emuspi_write_one_data(0x27);   
+gpio_lcd_truly_emuspi_write_one_data(0x27);           
+	SPI_Stop(); 
+
+
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0xD5);  //SET GIP 
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0x05);   
+gpio_lcd_truly_emuspi_write_one_data(0x03);   
+gpio_lcd_truly_emuspi_write_one_data(0x00);   
+gpio_lcd_truly_emuspi_write_one_data(0x01);   
+gpio_lcd_truly_emuspi_write_one_data(0x09);   
+gpio_lcd_truly_emuspi_write_one_data(0x10);   
+gpio_lcd_truly_emuspi_write_one_data(0x80);   
+gpio_lcd_truly_emuspi_write_one_data(0x37);   
+gpio_lcd_truly_emuspi_write_one_data(0x37);   
+gpio_lcd_truly_emuspi_write_one_data(0x20);   
+gpio_lcd_truly_emuspi_write_one_data(0x31);   
+gpio_lcd_truly_emuspi_write_one_data(0x46);   
+gpio_lcd_truly_emuspi_write_one_data(0x8A);   
+gpio_lcd_truly_emuspi_write_one_data(0x57);   
+gpio_lcd_truly_emuspi_write_one_data(0x9B);   
+gpio_lcd_truly_emuspi_write_one_data(0x20);   
+gpio_lcd_truly_emuspi_write_one_data(0x31);   
+gpio_lcd_truly_emuspi_write_one_data(0x46);   
+gpio_lcd_truly_emuspi_write_one_data(0x8A);   
+gpio_lcd_truly_emuspi_write_one_data(0x57);   
+gpio_lcd_truly_emuspi_write_one_data(0x9B);   
+gpio_lcd_truly_emuspi_write_one_data(0x07);   
+gpio_lcd_truly_emuspi_write_one_data(0x0F);   
+gpio_lcd_truly_emuspi_write_one_data(0x07);   
+gpio_lcd_truly_emuspi_write_one_data(0x00); 
+	SPI_Stop(); 
+
+
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0xE0);  //SET GAMMA 
+gpio_lcd_truly_emuspi_write_one_data(0x00); 
+gpio_lcd_truly_emuspi_write_one_data(0x02); 
+gpio_lcd_truly_emuspi_write_one_data(0x05); 
+gpio_lcd_truly_emuspi_write_one_data(0x31); 
+gpio_lcd_truly_emuspi_write_one_data(0x39); 
+gpio_lcd_truly_emuspi_write_one_data(0x3F); 
+gpio_lcd_truly_emuspi_write_one_data(0x0E); 
+gpio_lcd_truly_emuspi_write_one_data(0x31); 
+gpio_lcd_truly_emuspi_write_one_data(0x06); 
+gpio_lcd_truly_emuspi_write_one_data(0x0C); 
+gpio_lcd_truly_emuspi_write_one_data(0x0D); 
+gpio_lcd_truly_emuspi_write_one_data(0x10); 
+gpio_lcd_truly_emuspi_write_one_data(0x12); 
+gpio_lcd_truly_emuspi_write_one_data(0x10); 
+gpio_lcd_truly_emuspi_write_one_data(0x13); 
+gpio_lcd_truly_emuspi_write_one_data(0x10); 
+gpio_lcd_truly_emuspi_write_one_data(0x18); 
+gpio_lcd_truly_emuspi_write_one_data(0x00); 
+gpio_lcd_truly_emuspi_write_one_data(0x02); 
+gpio_lcd_truly_emuspi_write_one_data(0x05); 
+gpio_lcd_truly_emuspi_write_one_data(0x31); 
+gpio_lcd_truly_emuspi_write_one_data(0x39); 
+gpio_lcd_truly_emuspi_write_one_data(0x3F); 
+gpio_lcd_truly_emuspi_write_one_data(0x0E); 
+gpio_lcd_truly_emuspi_write_one_data(0x31); 
+gpio_lcd_truly_emuspi_write_one_data(0x06); 
+gpio_lcd_truly_emuspi_write_one_data(0x0C); 
+gpio_lcd_truly_emuspi_write_one_data(0x0D); 
+gpio_lcd_truly_emuspi_write_one_data(0x10); 
+gpio_lcd_truly_emuspi_write_one_data(0x12); 
+gpio_lcd_truly_emuspi_write_one_data(0x10); 
+gpio_lcd_truly_emuspi_write_one_data(0x13); 
+gpio_lcd_truly_emuspi_write_one_data(0x10); 
+gpio_lcd_truly_emuspi_write_one_data(0x18); 
+	SPI_Stop(); 
+
+
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0x3A); //Set_Color format 
+gpio_lcd_truly_emuspi_write_one_data(0x66);           
+	SPI_Stop(); 
+
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0xB3);  // SET Display  480x800 
+gpio_lcd_truly_emuspi_write_one_data(0x09); 
+SPI_Stop(); 
+
+
+  SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0x11);  //Sleep Out 
+	SPI_Stop(); 
+
+msleep(120); 
+
+SPI_Start(); 
+gpio_lcd_truly_emuspi_write_one_index(0x29);  //Display On 
+	SPI_Stop(); 
+#endif
+}
+void lcdc_hx8369_tianma_init(void)
+{	//for TIANMA+Hx8369
+	SPI_Start(); 
+		gpio_lcd_tianma_write_one_index(0xB9);  // SET password 
+		gpio_lcd_tianma_write_one_data(0xFF);   
+		gpio_lcd_tianma_write_one_data(0x83);   
+		gpio_lcd_tianma_write_one_data(0x69);   
+	SPI_Stop(); 
+
+	SPI_Start();                                      
+		gpio_lcd_tianma_write_one_index(0xB1); //Set Power
+		gpio_lcd_tianma_write_one_data(0xF5);
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0x44);
+		gpio_lcd_tianma_write_one_data(0x05);
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0x0f);
+		gpio_lcd_tianma_write_one_data(0x0f);
+		gpio_lcd_tianma_write_one_data(0x2A);
+		gpio_lcd_tianma_write_one_data(0x32);
+		gpio_lcd_tianma_write_one_data(0x3F);
+		gpio_lcd_tianma_write_one_data(0x3F);
+		gpio_lcd_tianma_write_one_data(0x01);
+		gpio_lcd_tianma_write_one_data(0x23);
+		gpio_lcd_tianma_write_one_data(0x01);
+		gpio_lcd_tianma_write_one_data(0xE6);
+		gpio_lcd_tianma_write_one_data(0xE6);
+		gpio_lcd_tianma_write_one_data(0xE6);
+		gpio_lcd_tianma_write_one_data(0xE6);
+		gpio_lcd_tianma_write_one_data(0xE6);                        
+	SPI_Stop(); 
+
+	SPI_Start(); 
+		gpio_lcd_tianma_write_one_index(0xB2); // SET Display
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0x23);
+		gpio_lcd_tianma_write_one_data(0x05);
+		gpio_lcd_tianma_write_one_data(0x05);
+		gpio_lcd_tianma_write_one_data(0x70);
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0xFF);
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0x03);
+		gpio_lcd_tianma_write_one_data(0x03);
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0x01);
+	SPI_Stop(); 
+
+	SPI_Start(); 	
+		gpio_lcd_tianma_write_one_index(0xB3);
+		gpio_lcd_tianma_write_one_data(0x09);      
+	SPI_Stop(); 
+
+	SPI_Start();
+		gpio_lcd_tianma_write_one_index(0xB4);  // SET Display  480x800 
+		gpio_lcd_tianma_write_one_data(0x02);   
+		gpio_lcd_tianma_write_one_data(0x18);   //0C
+		gpio_lcd_tianma_write_one_data(0x80); //A0
+		gpio_lcd_tianma_write_one_data(0x06);  // 0E
+		gpio_lcd_tianma_write_one_data(0x02);   //06
+	SPI_Stop(); 
+
+	SPI_Start();
+		gpio_lcd_tianma_write_one_index(0xB6);  // SET VCOM 
+		gpio_lcd_tianma_write_one_data(0x27);          
+		gpio_lcd_tianma_write_one_data(0x27);  
+	SPI_Stop(); 
+
+	SPI_Start();
+		gpio_lcd_tianma_write_one_index(0xcc);  // SET adderr mode 
+		gpio_lcd_tianma_write_one_data(0x02);
+	SPI_Stop(); 
+
+	SPI_Start(); 
+		gpio_lcd_tianma_write_one_index(0xD5);   
+		gpio_lcd_tianma_write_one_data(0x00);
+		gpio_lcd_tianma_write_one_data(0x01);
+		gpio_lcd_tianma_write_one_data(0x03);
+		gpio_lcd_tianma_write_one_data(0x25);
+		gpio_lcd_tianma_write_one_data(0x01);
+		gpio_lcd_tianma_write_one_data(0x02);
+		gpio_lcd_tianma_write_one_data(0x28);
+		gpio_lcd_tianma_write_one_data(0x70);
+		gpio_lcd_tianma_write_one_data(0x21);
+		gpio_lcd_tianma_write_one_data(0x23);
+		gpio_lcd_tianma_write_one_data(0x02);
+		gpio_lcd_tianma_write_one_data(0x13);
+		gpio_lcd_tianma_write_one_data(0xF4);
+		gpio_lcd_tianma_write_one_data(0xF6);
+		gpio_lcd_tianma_write_one_data(0xF5);
+		gpio_lcd_tianma_write_one_data(0xF7);
+		gpio_lcd_tianma_write_one_data(0x31);
+		gpio_lcd_tianma_write_one_data(0x20);
+		gpio_lcd_tianma_write_one_data(0x05);
+		gpio_lcd_tianma_write_one_data(0x07);
+		gpio_lcd_tianma_write_one_data(0x04);
+		gpio_lcd_tianma_write_one_data(0x06);
+		gpio_lcd_tianma_write_one_data(0x07);
+		gpio_lcd_tianma_write_one_data(0x0F);
+		gpio_lcd_tianma_write_one_data(0x04);
+		gpio_lcd_tianma_write_one_data(0x04); 
+	SPI_Stop(); 
+
+	SPI_Start();
+		gpio_lcd_tianma_write_one_index(0xE0); 
+		gpio_lcd_tianma_write_one_data(0x01);
+		gpio_lcd_tianma_write_one_data(0x06);
+		gpio_lcd_tianma_write_one_data(0x06);
+		gpio_lcd_tianma_write_one_data(0x2C);
+		gpio_lcd_tianma_write_one_data(0x31);
+		gpio_lcd_tianma_write_one_data(0x3f);
+		gpio_lcd_tianma_write_one_data(0x08);
+		gpio_lcd_tianma_write_one_data(0x37);
+		gpio_lcd_tianma_write_one_data(0x06);
+		gpio_lcd_tianma_write_one_data(0x09);
+		gpio_lcd_tianma_write_one_data(0x0c);
+		gpio_lcd_tianma_write_one_data(0x0e);
+		gpio_lcd_tianma_write_one_data(0x10);
+		gpio_lcd_tianma_write_one_data(0x10);
+		gpio_lcd_tianma_write_one_data(0x12);
+		gpio_lcd_tianma_write_one_data(0x14);
+		gpio_lcd_tianma_write_one_data(0x1F);
+		gpio_lcd_tianma_write_one_data(0x01);
+		gpio_lcd_tianma_write_one_data(0x06);
+		gpio_lcd_tianma_write_one_data(0x06);
+		gpio_lcd_tianma_write_one_data(0x2C);
+		gpio_lcd_tianma_write_one_data(0x31);
+		gpio_lcd_tianma_write_one_data(0x3f);
+		gpio_lcd_tianma_write_one_data(0x08);
+		gpio_lcd_tianma_write_one_data(0x37);
+		gpio_lcd_tianma_write_one_data(0x06);
+		gpio_lcd_tianma_write_one_data(0x09);
+		gpio_lcd_tianma_write_one_data(0x0c);
+		gpio_lcd_tianma_write_one_data(0x0e);
+		gpio_lcd_tianma_write_one_data(0x10);
+		gpio_lcd_tianma_write_one_data(0x10);
+		gpio_lcd_tianma_write_one_data(0x12);
+		gpio_lcd_tianma_write_one_data(0x14);
+		gpio_lcd_tianma_write_one_data(0x1F);
+	SPI_Stop();
+
+	SPI_Start(); 
+		gpio_lcd_tianma_write_one_index(0x3A); 
+		gpio_lcd_tianma_write_one_data(0x66);   //77:24bit    
+	SPI_Stop();  
+
+	SPI_Start(); 
+		gpio_lcd_tianma_write_one_index(0x11);  
+	SPI_Stop(); 
+
+		msleep(140);
+
+	SPI_Start(); 
+		gpio_lcd_tianma_write_one_index(0x29);
+	SPI_Stop(); 
+		
+	SPI_Start(); 
+		gpio_lcd_truly_emuspi_write_one_index(0x2C);
+	SPI_Stop(); 
+		
+		printk("\n lcdc tianma panel init\n!");
 
 }
-
 static void spi_init(void)
 {
 	spi_sclk = *(lcdc_tft_pdata->gpio_num+ 5);
@@ -1270,7 +2616,32 @@ void lcdc_truly_sleep(void)
 	SPI_Stop(); 
 	msleep(120);
 }
+void lcdc_hx8369_tianma_sleep(void)
+{
+	SPI_Start(); 
+	    gpio_lcd_tianma_write_one_index(0x28);  
+	SPI_Stop(); 
+	SPI_Start(); 
+	    gpio_lcd_tianma_write_one_index(0x10);  
+	SPI_Stop(); 
+	msleep(120);
+}
+
 void lcdc_lead_sleep(void)
+{
+	gpio_lcd_lead_emuspi_write_cmd(0x2800,0x00);
+	gpio_lcd_lead_emuspi_write_cmd(0x1000,0x00);	
+	msleep(200);	
+	//gpio_lcd_lead_emuspi_write_cmd(0x2800,0x00);
+}
+void lcdc_boe_sleep(void)
+{
+	gpio_lcd_lead_emuspi_write_cmd(0x2800,0x00);
+	gpio_lcd_lead_emuspi_write_cmd(0x1000,0x00);	
+	msleep(200);	
+	//gpio_lcd_lead_emuspi_write_cmd(0x2800,0x00);
+}
+void lcdc_lead_rm68120_sleep(void)
 {
 	gpio_lcd_lead_emuspi_write_cmd(0x2800,0x00);
 	gpio_lcd_lead_emuspi_write_cmd(0x1000,0x00);	
@@ -1287,6 +2658,15 @@ static int lcdc_panel_off(struct platform_device *pdev)
 			break;
 		case LCD_PANEL_LEAD_WVGA:
 //			lcdc_lead_sleep();
+			break;
+		case LCD_PANEL_BOE_WVGA:
+			lcdc_boe_sleep();
+			break;
+		case LCD_PANEL_TFT_LEAD_RM68120:
+			lcdc_lead_rm68120_sleep();
+			break;
+		case LCD_PANEL_HX8369_TIANMA_WVGA:
+			lcdc_hx8369_tianma_sleep();
 			break;
 		default:
 			break;
@@ -1306,13 +2686,14 @@ static LCD_PANEL_TYPE lcd_panel_detect(void)
 	LCD_PANEL_TYPE panel_type;
 	boolean read_truly_id=true;
 	spi_init();
+	
 	if(read_truly_id)
 	{
 		SPI_Start(); 
-	    gpio_lcd_truly_emuspi_write_one_index(0xB9);  // SET password 
-	    gpio_lcd_truly_emuspi_write_one_data(0xFF);   
-	    gpio_lcd_truly_emuspi_write_one_data(0x83);   
-	    gpio_lcd_truly_emuspi_write_one_data(0x69);   
+		gpio_lcd_truly_emuspi_write_one_index(0xB9);  // SET password 
+		gpio_lcd_truly_emuspi_write_one_data(0xFF);   
+		gpio_lcd_truly_emuspi_write_one_data(0x83);   
+		gpio_lcd_truly_emuspi_write_one_data(0x69);   
 	  	SPI_Stop();   
 		//Read from RF4H=R69H 
 		//msleep(100); 
@@ -1339,7 +2720,31 @@ static LCD_PANEL_TYPE lcd_panel_detect(void)
 	}
 	else
 	{
-		panel_type=LCD_PANEL_LEAD_WVGA;
+		
+	     	gpio_lcd_lead_emuspi_read_one_index(0xDA00,&id_h);        	
+		printk("lead id 0xDA00 is 0x%x\n",id_h);
+		if(id_h==0xb0)
+		{
+			panel_type=LCD_PANEL_BOE_WVGA;
+		}
+		else
+		{
+			gpio_lcd_lead_emuspi_read_one_index(0x0400,&id_h);
+			gpio_lcd_lead_emuspi_read_one_index(0x0401,&id_l);
+			printk("lead id is 0x%x%x\n",id_h,id_l);
+			if((id_h==0x11)&&(id_l==0x82))
+				panel_type=LCD_PANEL_TFT_LEAD_RM68120;
+			else
+				panel_type=LCD_PANEL_LEAD_WVGA;
+		}
+		return panel_type;
+	}
+	
+	Get_Tianma_ID(&id);
+	printk("\n tianma id is 0x%x\n",id);
+	if (id == 0x51)
+	{
+		panel_type = LCD_PANEL_HX8369_TIANMA_WVGA;
 		return panel_type;
 	}
 
@@ -1359,6 +2764,15 @@ void lcd_panel_init(void)
 			break;
 		case LCD_PANEL_LEAD_WVGA:
 			lcdc_lead_init();
+			break;
+		case LCD_PANEL_BOE_WVGA:
+			lcdc_boe_init();
+			break;
+		case LCD_PANEL_TFT_LEAD_RM68120:
+			lcdc_lead_rm68120_init();
+			break;
+		case LCD_PANEL_HX8369_TIANMA_WVGA:
+			lcdc_hx8369_tianma_init();
 			break;
 		default:
 			break;
@@ -1394,10 +2808,36 @@ static int  lcdc_panel_probe(struct platform_device *pdev)
 			pinfo = &lcdc_tft_panel_data.panel_info;
 			pinfo->lcdc.h_back_porch = 5;
 			pinfo->lcdc.h_front_porch = 5;
-			pinfo->lcdc.h_pulse_width = 1;
-			pinfo->lcdc.v_back_porch = 5;
-			pinfo->lcdc.v_front_porch = 5;
-			pinfo->lcdc.v_pulse_width = 1;
+			pinfo->lcdc.h_pulse_width = 5;
+			pinfo->lcdc.v_back_porch = 8;
+			pinfo->lcdc.v_front_porch = 8;
+			pinfo->lcdc.v_pulse_width = 4;
+			pinfo->lcdc.border_clr = 0;	/* blk */
+			pinfo->lcdc.underflow_clr = 0xffff;	/* blue */
+			pinfo->lcdc.hsync_skew = 0;
+		}
+		 else if (g_lcd_panel_type==LCD_PANEL_HX8369_TIANMA_WVGA)
+		{
+			pinfo = &lcdc_tft_panel_data.panel_info;
+			pinfo->lcdc.h_back_porch = 30;
+			pinfo->lcdc.h_front_porch = 16;
+			pinfo->lcdc.h_pulse_width = 8;
+			pinfo->lcdc.v_back_porch = 3;
+			pinfo->lcdc.v_front_porch = 8;
+			pinfo->lcdc.v_pulse_width = 3;
+			pinfo->lcdc.border_clr = 0;	/* blk */
+			pinfo->lcdc.underflow_clr = 0xffff;	/* blue */
+			pinfo->lcdc.hsync_skew = 0;
+		}
+		 else if  (g_lcd_panel_type==LCD_PANEL_TFT_LEAD_RM68120)
+		{
+			pinfo = &lcdc_tft_panel_data.panel_info;
+			pinfo->lcdc.h_back_porch = 25;
+			pinfo->lcdc.h_front_porch = 8;
+			pinfo->lcdc.h_pulse_width = 8;
+			pinfo->lcdc.v_back_porch = 24;
+			pinfo->lcdc.v_front_porch = 8;
+			pinfo->lcdc.v_pulse_width = 8;
 			pinfo->lcdc.border_clr = 0;	/* blk */
 			pinfo->lcdc.underflow_clr = 0xffff;	/* blue */
 			pinfo->lcdc.hsync_skew = 0;
@@ -1425,13 +2865,28 @@ static int  lcdc_panel_probe(struct platform_device *pdev)
 		switch(g_lcd_panel_type)
 		{
 			case LCD_PANEL_TRULY_WVGA:
-				LcdPanleID=(u32)61;   //ZTE_LCD_LHT_20100611_001
+				LcdPanleID=(u32)LCD_PANEL_4P3_HX8369A;   //ZTE_LCD_LHT_20100611_001
 				pinfo->clk_rate = 24576000;
 				ret = platform_device_register(&this_device);
 				break;
 			case LCD_PANEL_LEAD_WVGA:
 				pinfo->clk_rate = 24576000;
-				LcdPanleID=(u32)60;   //ZTE_LCD_LHT_20100611_001
+				LcdPanleID=(u32)LCD_PANEL_4P3_NT35510;   //ZTE_LCD_LHT_20100611_001
+				ret = platform_device_register(&this_device);
+				break;
+			case LCD_PANEL_BOE_WVGA:
+				pinfo->clk_rate = 24576000;
+				LcdPanleID=(u32)LCD_PANEL_4P3_NT35510_2;   //ZTE_LCD_LHT_20100611_001
+				ret = platform_device_register(&this_device);
+				break;
+			case LCD_PANEL_TFT_LEAD_RM68120:
+				pinfo->clk_rate = 24576000;
+				LcdPanleID=(u32)LCD_PANEL_4P3_RM68120_LEAD;   //ZTE_LCD_LHT_20100611_001
+				ret = platform_device_register(&this_device);
+				break;
+			case LCD_PANEL_HX8369_TIANMA_WVGA://pan temp
+				pinfo->clk_rate = 24576000;
+				LcdPanleID=(u32)LCD_PANEL_4P3_HX8369A_TM;   //ZTE_LCD_PAN_2012-1-7 11:03
 				ret = platform_device_register(&this_device);
 				break;
 			default:

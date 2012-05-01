@@ -474,13 +474,15 @@ static unsigned short synaptics_get_config_size(void)
 
 #if 0
 //Go to a endless circule if config or firmware sizes dismatch here.
-void synaptics_read_firmware_header(struct i2c_client *client)
+static void synaptics_read_firmware_header(struct i2c_client *client
+	byte *pfwfile, unsigned long filesize)
 {
 	unsigned long check_sum;
 	//unsigned char data;
 	int ret;
+	//unsigned long filesize;
 	
-	filesize = sizeof(SynaFirmware) -1;
+	//filesize = sizeof(SynaFirmware) -1;
 
 	pr_info("\n%s:Scanning SynaFirmware[], header file - len = %ld \n\n", __func__, filesize);
 
@@ -1067,7 +1069,7 @@ static DEVICE_ATTR(synafwupdate, S_IRUGO|S_IWUSR, syna_fwupdate_show, syna_fwupd
 //void ioctol(struct i2c_client *client)
 extern struct kobject *firmware_kobj;
 
-void syna_fwupdate(void)
+void syna_fwupdate(void) 
 {
 	struct i2c_client *client = syna_i2c_client;
 

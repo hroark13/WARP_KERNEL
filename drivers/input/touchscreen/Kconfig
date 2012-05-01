@@ -87,18 +87,6 @@ config TOUCHSCREEN_AD7879
 	tristate
 	default n
 
-config TOUCHSCREEN_ATMEL_MAXTOUCH
-       tristate "Atmel maXTouch based touchscreens"
-       depends on I2C
-       default n
-       help
-         Say Y here if you have an Atmel Maxtouch based touchscreen.
-
-         If unsure, say N.
-
-         To compile this driver as a module, choose M here: the
-         module will be called maXTouch.
-
 config TOUCHSCREEN_BITSY
 	tristate "Compaq iPAQ H3600 (Bitsy) touchscreen"
 	depends on SA1100_BITSY
@@ -701,15 +689,21 @@ config TOUCHSCREEN_CYTTSP_I2C
        depends on I2C
        default n 
        
-config TOUCHSCREEN_MXT224_NEW
-       tristate "MXT224 new based touchscreens"
+ config TOUCHSCREEN_MXT224_P855D10
+       tristate "MXT224 based touchscreens for p855d10"
        depends on I2C
        default n 
        
-config ATMEL_FW_UPDATE   
-        tristate "MXT224 based touchscreens for fimeware update"
+ config TOUCHSCREEN_MXT224_NEW
+       tristate "MXT224 based touchscreens new"
        depends on I2C
        default n 
+       
+ config ATMEL_FW_UPDATE   
+        tristate "MXT224 based touchscreens for fimeware update"
+       depends on I2C
+       default n               
+       
  config ATMEL_FW_UPDATE_224   
         tristate "MXT224 224 based touchscreens for fimeware update"
        depends on I2C
@@ -719,7 +713,7 @@ config ATMEL_FW_UPDATE
         tristate "MXT224 140 based touchscreens for fimeware update"
        depends on I2C
        default n 
-          
+       
 config ATMEL_TS_USB_NOTIFY  
        tristate "MXT224 touchscreens usb notify"
        depends on I2C
@@ -729,8 +723,21 @@ config ATMEL_TS_USB_NOTIFY
        tristate "FocalTech touchscreen"
        depends on I2C
        default n
+ config TOUCHSCREEN_FOCALTECH_NEW
+       tristate "FocalTech touchscreen new"
+       depends on I2C
+       default n
        
 config TOUCHSCREEN_VIRTUAL_KEYS
        tristate "touchscreens virtual key support"
        default n 
+
+config FTS_USB_NOTIFY
+		tristate "notify touchscrenn about usb plugin/plugout event"
+		default n 
+
+config SUPPORT_FTS_CTP_UPG
+		tristate "FOCALTECH firmware update"
+		default n
+
 endif

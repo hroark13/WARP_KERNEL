@@ -78,7 +78,7 @@ static const char ts_keys_size[] = "0x01:102:60:850:100:50:0x01:139:180:850:100:
 #elif defined(CONFIG_MACH_SEAN)
 static const char ts_keys_size[] = "0x01:102:40:510:100:60:0x01:139:120:510:100:60:0x01:158:200:510:100:60:0x01:217:280:510:100:60";
 #elif defined(CONFIG_MACH_SKATEPLUS)
-static const char ts_keys_size[] = "0x01:102:43:850:60:50:0x01:139:235:850:60:50:0x01:158:436:850:60:50";
+static const char ts_keys_size[] = "0x01:102:55:838:120:60:0x01:139:240:838:120:60:0x01:158:420:838:120:60";
 #else
 static const char ts_keys_size[] = "0x01:102:51:503:102:1007:0x01:139:158:503:102:1007:0x01:158:266:503:102:1007";
 #endif 
@@ -126,6 +126,7 @@ static void ts_key_report_deinit(void)
 #ifdef TOUCHSCREEN_DUPLICATED_FILTER
 
 #define LCD_UNIT_PATH "dev/graphics/fb0"
+
 static int get_screeninfo(uint *xres, uint *yres)
 {
 	struct fb_info *info;
@@ -731,6 +732,7 @@ static int synaptics_rmi4_probe(
 //#endif
 
 	max_x=ts->max[0];
+#if defined (CONFIG_TOUCHSCREEN_VIRTUAL_KEYS)
 #if defined(CONFIG_MACH_R750)
 	max_y= 2739;
 #elif defined(CONFIG_MACH_V9PLUS)
@@ -739,6 +741,11 @@ static int synaptics_rmi4_probe(
 	max_y=1872;
 #elif defined(CONFIG_MACH_SEAN)
 	max_y=1450;
+#elif defined(CONFIG_MACH_SKATEPLUS)
+	max_y=1884;
+#else
+	max_y=ts->max[1];
+#endif
 #else
 	max_y=ts->max[1];
 #endif
@@ -765,7 +772,11 @@ static int synaptics_rmi4_probe(
 {
 	uint xres,yres=0;
 	get_screeninfo(&xres, &yres);
+	#if defined (CONFIG_MACH_SKATEPLUS) || defined (CONFIG_MACH_ARTHUR)
+	ts->dup_threshold= (3*max_y)/yres;
+	#else
 	ts->dup_threshold=(max_y*10/yres+5)/10;	
+	#endif 
 	//ts->dup_threshold=(max_y*10/LCD_MAX_Y+5)/10;
 	//pr_info("dup_threshold %d\n", ts->dup_threshold);
 }

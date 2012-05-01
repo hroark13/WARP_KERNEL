@@ -654,6 +654,7 @@ static void msmfb_early_suspend(struct early_suspend *h)
 		memset_io(fbi->screen_base, 0x00, fbi->fix.smem_len);
 		break;
 	}
+	mfd->overlay_play_enable=0;
 #endif
 	msm_fb_suspend_sub(mfd);
 }
@@ -662,6 +663,7 @@ static void msmfb_early_resume(struct early_suspend *h)
 {
 	struct msm_fb_data_type *mfd = container_of(h, struct msm_fb_data_type,
 						    early_suspend);
+	mfd->overlay_play_enable=1;
 	msm_fb_resume_sub(mfd);
 }
 #endif
@@ -2424,6 +2426,10 @@ static int msmfb_overlay_get(struct fb_info *info, void __user *p)
 {
 	struct mdp_overlay req;
 	int ret;
+	
+	//struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
+	//if (mfd->overlay_play_enable == 0)	/* nothing to do */
+		//return -EFAULT;
 
 	if (copy_from_user(&req, p, sizeof(req)))
 		return -EFAULT;
@@ -2447,6 +2453,10 @@ static int msmfb_overlay_set(struct fb_info *info, void __user *p)
 {
 	struct mdp_overlay req;
 	int ret;
+	//struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
+	
+	//if (mfd->overlay_play_enable == 0)	/* nothing to do */
+	//	return -EFAULT;
 
 	if (copy_from_user(&req, p, sizeof(req)))
 		return -EFAULT;
@@ -2470,6 +2480,10 @@ static int msmfb_overlay_set(struct fb_info *info, void __user *p)
 static int msmfb_overlay_unset(struct fb_info *info, unsigned long *argp)
 {
 	int	ret, ndx;
+	//struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
+	
+	//if (mfd->overlay_play_enable == 0)	/* nothing to do */
+		//return -EFAULT;
 
 	ret = copy_from_user(&ndx, argp, sizeof(ndx));
 	if (ret) {
@@ -2531,6 +2545,10 @@ static int msmfb_overlay_blt(struct fb_info *info, unsigned long *argp)
 	int     ret;
 	struct msmfb_overlay_blt req;
 	struct file *p_src_file = 0;
+	//struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
+	
+	//if (mfd->overlay_play_enable == 0)	/* nothing to do */
+		//return -EFAULT;
 
 	ret = copy_from_user(&req, argp, sizeof(req));
 	if (ret) {
@@ -2565,6 +2583,11 @@ static int msmfb_overlay_3d(struct fb_info *info, unsigned long *argp)
 {
 	int	ret;
 	struct msmfb_overlay_3d req;
+	
+	//struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
+	
+	//if (mfd->overlay_play_enable == 0)	/* nothing to do */
+		//return -EFAULT;
 
 	ret = copy_from_user(&req, argp, sizeof(req));
 	if (ret) {
@@ -2941,6 +2964,15 @@ static int msm_lcd_read_proc(
 			break;
 		case LCD_PANEL_4P3_HX8369A:
 			strcpy(module_name,"61");
+			break;
+		case LCD_PANEL_4P3_RM68120_LEAD:
+			strcpy(module_name,"zteLEAD(RM68120)_WVGA_4.3Inch");
+			break;
+		case LCD_PANEL_4P3_HX8369A_TM:
+			strcpy(module_name,"zteTM4.3WVGA480*800");
+			break;	
+		case LCD_PANEL_4P3_NT35510_2:
+			strcpy(module_name,"zteBOE4.3WVGA480*800");
 			break;
 		case LCD_PANEL_3P8_NT35510_1:
 			strcpy(module_name,"70");

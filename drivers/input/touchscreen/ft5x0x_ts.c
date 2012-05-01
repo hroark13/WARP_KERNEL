@@ -22,6 +22,8 @@ When		Who		What,Where,Why		Comment		Tag
 #include <linux/platform_device.h>
 #include <linux/input/ft5x0x_ts.h>
 #include <mach/gpio.h>
+#include <linux/fb.h>
+
 
 #if 0
 #if defined(CONFIG_MACH_BLADE)//P729B touchscreen enable
@@ -46,6 +48,12 @@ When		Who		What,Where,Why		Comment		Tag
 static struct workqueue_struct *Fts_wq;
 static struct i2c_driver Fts_ts_driver;
 
+static u8 fwVer=0;//ZTE_TS_XYM_20110830
+#if defined(CONFIG_SUPPORT_FTS_CTP_UPG)
+static struct i2c_client *update_client;
+static int update_result_flag=0;
+#endif
+
 struct Fts_ts_data
 {
 	uint16_t addr;
@@ -67,22 +75,19 @@ proc_read_val(char *page, char **start, off_t off, int count, int *eof,
 	int len = 0;
 	len += sprintf(page + len, "%s\n", "touchscreen module");
 	len += sprintf(page + len, "name     : %s\n", "FocalTech");
-	#if defined(CONFIG_MACH_R750)
+#if defined(CONFIG_MACH_R750)
 	len += sprintf(page + len, "i2c address  : %x\n", 0x3E);
-	#else
+#else
 	len += sprintf(page + len, "i2c address  : 0x%x\n", 0x3E);
-	#endif
+#endif
 	len += sprintf(page + len, "IC type    : %s\n", "FT5X06");
-	#if 0
-	#if defined(CONFIG_MACH_R750)
-	len += sprintf(page + len, "firmware version    : %s\n", "TM1551");
-	#elif  defined(CONFIG_MACH_JOE)
-	len += sprintf(page + len, "firmware version    : %s\n", "TM1419-001");
-	#elif  defined(CONFIG_MACH_BLADE)
-	len += sprintf(page + len, "firmware version    : %s\n", "TM1541");
-	#endif
-	#endif
 	len += sprintf(page + len, "module : %s\n", "FocalTech FT5x06");
+
+	len += sprintf(page + len, "firmware : 0x%x\n", fwVer );//ZTE_TS_XYM_20110830
+#ifdef CONFIG_SUPPORT_FTS_CTP_UPG
+	len += sprintf(page + len, "update flag : 0x%x\n", update_result_flag);
+#endif
+	
 	if (off + count >= len)
 		*eof = 1;
 	if (len < off)
@@ -94,50 +99,80 @@ proc_read_val(char *page, char **start, off_t off, int count, int *eof,
 static int proc_write_val(struct file *file, const char *buffer,
            unsigned long count, void *data)
 {
+#ifdef CONFIG_SUPPORT_FTS_CTP_UPG
+    int ret = 0;//ZTE_TS_XYM_20110830
+#endif
+
 		unsigned long val;
 		sscanf(buffer, "%lu", &val);
 		//pr_info(%s called!\n", __func__);
+
+#ifdef CONFIG_SUPPORT_FTS_CTP_UPG
+	{
+		printk("Fts Upgrade Start\n");
+		update_result_flag=0;
+
+		fts_ctpm_fw_upgrade(update_client, CTPM_FW, sizeof(CTPM_FW));
+		//fts_ctpm_fw_upgrade_with_i_file(ts->client);//Update the CTPM firmware if need
+		
+		update_result_flag=2;
+	}
+
+    ret = Fts_i2c_read(update_client, FT5X0X_REG_FIRMID, &fwVer,1) ;//ZTE_TS_XYM_20110830
+    printk("%s: New Fts FW ID read ID = 0x%x, ret = 0x%x\n", __FUNCTION__, fwVer, ret);//ZTE_TS_XYM_20110830
+#endif		
+		
 		return -EINVAL;
 }
 
-static int Fts_i2c_read(struct i2c_client *client, int reg, u8 * buf, int count)
+static int Fts_i2c_read(struct i2c_client *client, uint8_t reg, u8 * buf, int count) 
 {
-    int rc;
-    int ret = 0;
-
-    buf[0] = reg;
-    rc = i2c_master_send(client, buf, 1);
-    if (rc != 1)
-    {
-        dev_err(&client->dev, "Fts_i2c_read FAILED: read of register %d\n", reg);
-        ret = -1;
-        goto tp_i2c_rd_exit;
+	int ret;
+	struct i2c_msg msg[] = {
+		{
+			.addr = client->addr,
+			.flags = 0,
+			.len = 1,
+			.buf = &reg,
+		},
+		{
+			.addr = client->addr,
+			.flags = I2C_M_RD,
+			.len = count,
+			.buf = buf,
     }
-    rc = i2c_master_recv(client, buf, count);
-    if (rc != count)
-    {
-        dev_err(&client->dev, "Fts_i2c_read FAILED: read %d bytes from reg %d\n", count, reg);
-        ret = -1;
-    }
+	};
 
-  tp_i2c_rd_exit:
-    return ret;
+	ret = i2c_transfer(client->adapter, msg, 2);
+  if ( ret != 2 )
+    {
+      dev_err(&client->dev, "Fts_i2c_read FAILED: read %d bytes from reg %d\n", count, reg);
+      return -1;
+    }
+	return 0;
 }
+
+
 static int Fts_i2c_write(struct i2c_client *client, int reg, u8 data)
 {
-    u8 buf[2];
-    int rc;
-    int ret = 0;
+	int ret;
+	struct i2c_msg msg;
+  u8 buf[2];
+  buf[0] = reg;
+  buf[1] = data;
+	msg.addr = client->addr;
+	msg.flags = client->flags & I2C_M_TEN;
+	msg.len = 2;
+	msg.buf = (char *)buf;
 
-    buf[0] = reg;
-    buf[1] = data;
-    rc = i2c_master_send(client, buf, 2);
-    if (rc != 2)
+	ret = i2c_transfer(client->adapter, &msg, 1);
+	if ( ret != 1 )
     {
         dev_err(&client->dev, "Fts_i2c_write FAILED: writing to reg %d\n", reg);
-        ret = -1;
+        return -1;
     }
-    return ret;
+
+	return 0;
 }
 
 
@@ -451,6 +486,24 @@ unsigned char fts_ctpm_get_upg_ver(void)
 
 #endif
 
+static int get_screeninfo(uint *xres, uint *yres)
+{
+	struct fb_info *info;
+
+	info = registered_fb[0];
+	if (!info) {
+		pr_err("%s: Can not access lcd info \n",__func__);
+		return -ENODEV;
+	}
+
+	*xres = info->var.xres;
+	*yres = info->var.yres;
+	printk("xres=%d, yres=%d \n",*xres,*yres);
+
+	return 1;
+}
+
+
 static void Fts_ts_work_func(struct work_struct *work)
 {
 	int ret, x, y, z, finger, w, x2, y2,w2,z2,finger2,pressure,pressure2;
@@ -593,9 +646,10 @@ static int Fts_ts_probe(
 	struct Fts_ts_data *ts;
 	struct ft5x0x_ts_platform_data *pdata;
 	int ret = 0;
-	u8 fwVer;
+	//u8 fwVer;
 	struct proc_dir_entry *dir, *refresh;
-	u8 buf;
+	//u8 buf;
+	int xres, yres;
 
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
@@ -622,6 +676,9 @@ static int Fts_ts_probe(
 	}
 	/*ZTE_TS_ZFJ_20110302 end */
 	ts->client = client;
+#ifdef CONFIG_SUPPORT_FTS_CTP_UPG
+	update_client = client;
+#endif
 	i2c_set_clientdata(client, ts);
 	client->driver = &Fts_ts_driver;
 	
@@ -655,8 +712,8 @@ static int Fts_ts_probe(
 		int retry = 3;
 		while (retry-- > 0)
 		{
-			ret = Fts_i2c_read(client, FT5X0X_REG_FIRMID, &buf,1);
-			pr_info("wly: Fts_i2c_read, FT5X0X_REG_FIRMID = %d.\n", buf);
+			ret = Fts_i2c_read(client, FT5X0X_REG_FIRMID, &fwVer,1);
+			pr_info("wly: Fts_i2c_read, FT5X0X_REG_FIRMID = 0x%x.\n", fwVer);
 			//ZTE_TOUCH_WLY_009,2010-05-10, BEGIN
 			if (0 == ret)
 				break;
@@ -682,7 +739,9 @@ static int Fts_ts_probe(
 	
 	ts->input_dev->name = "Fts-touchscreen";
 	ts->input_dev->phys = "Fts-touchscreen/input0";
-	
+
+	get_screeninfo(&xres, &yres);
+
 	set_bit(EV_SYN, ts->input_dev->evbit);
 	set_bit(EV_KEY, ts->input_dev->evbit);
 	set_bit(BTN_TOUCH, ts->input_dev->keybit);
@@ -701,8 +760,8 @@ static int Fts_ts_probe(
 	set_bit(ABS_MT_WIDTH_MAJOR, ts->input_dev->absbit);
 	
 	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
-	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, SCREEN_MAX_X, 0, 0);
-	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, SCREEN_MAX_Y, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, xres, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, yres, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_WIDTH_MAJOR, 0, 255, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_SINGLE_TAP, 0, 5, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_TAP_HOLD, 0, 5, 0, 0);
@@ -747,7 +806,8 @@ static int Fts_ts_probe(
 
 //Firmware Upgrade handle Start
 	ret = Fts_i2c_read(ts->client, FT5X0X_REG_FIRMID, &fwVer,1) ;
-	printk("Fts FW ID read ID = %x,ret = %x\n",fwVer,ret);
+	printk("%s: Fts FW ID read ID = 0x%x, ret = 0x%x\n", __FUNCTION__, fwVer,ret);
+/* //xiayc@20110913
 #ifdef CONFIG_SUPPORT_FTS_CTP_UPG
 	if (  fts_ctpm_get_upg_ver() > fwVer )
 	{
@@ -756,7 +816,10 @@ static int Fts_ts_probe(
 		fts_ctpm_fw_upgrade(ts->client,CTPM_FW, sizeof(CTPM_FW));
 		//fts_ctpm_fw_upgrade_with_i_file(ts->client);//Update the CTPM firmware if need
 	}
+	ret = Fts_i2c_read(ts->client, FT5X0X_REG_FIRMID, &fwVer,1) ;
+	printk("%s: Fts NEW FW ID read ID = 0x%x, ret = 0x%x\n", __FUNCTION__, fwVer,ret);
 #endif
+*/
 //Firmware Upgrade handle End	
 
 #if defined(CONFIG_TOUCHSCREEN_VIRTUAL_KEYS)

@@ -809,7 +809,7 @@ static int lcdc_panel_off(struct platform_device *pdev)
 			lcdc_truly_sleep();
 			break;
 		case LCD_PANEL_LEAD_WVGA:
-			lcdc_lead_sleep();
+			//lcdc_lead_sleep();
 			break;
 		default:
 			break;

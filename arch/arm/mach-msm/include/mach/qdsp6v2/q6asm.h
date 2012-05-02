@@ -52,6 +52,7 @@
 #define FORMAT_WMA_V10PRO   0x000e
 #define FORMAT_WMA_V9	    0x000f
 #define FORMAT_AMR_WB_PLUS  0x0010
+#define FORMAT_MPEG4_MULTI_AAC 0x0011
 
 #define ENCDEC_SBCBITRATE   0x0001
 #define ENCDEC_IMMEDIATE_DECODE 0x0002
@@ -61,6 +62,7 @@
 #define CMD_FLUSH          0x0002
 #define CMD_EOS            0x0003
 #define CMD_CLOSE          0x0004
+#define CMD_OUT_FLUSH      0x0005
 
 /* bit 0:1 represents priority of stream */
 #define STREAM_PRIORITY_NORMAL	0x0000
@@ -70,10 +72,18 @@
 /* bit 4 represents META enable of encoded data buffer */
 #define BUFFER_META_ENABLE	0x0010
 
+/* Enable Sample_Rate/Channel_Mode notification event from Decoder */
+#define SR_CM_NOTIFY_ENABLE	0x0004
+
 #define ASYNC_IO_MODE	0x0002
 #define SYNC_IO_MODE	0x0001
 #define NO_TIMESTAMP    0xFF00
 #define SET_TIMESTAMP   0x0000
+
+#define SOFT_PAUSE_ENABLE	1
+#define SOFT_PAUSE_DISABLE	0
+
+#define SESSION_MAX	0x08
 
 typedef void (*app_cb)(uint32_t opcode, uint32_t token,
 			uint32_t *payload, void *priv);
@@ -157,7 +167,6 @@ int q6asm_open_read_write(struct audio_client *ac,
 
 int q6asm_write(struct audio_client *ac, uint32_t len, uint32_t msw_ts,
 				uint32_t lsw_ts, uint32_t flags);
-
 int q6asm_write_nolock(struct audio_client *ac, uint32_t len, uint32_t msw_ts,
 				uint32_t lsw_ts, uint32_t flags);
 
@@ -204,6 +213,12 @@ int q6asm_enc_cfg_blk_aac(struct audio_client *ac,
 int q6asm_enc_cfg_blk_pcm(struct audio_client *ac,
 			uint32_t rate, uint32_t channels);
 
+int q6asm_enable_sbrps(struct audio_client *ac,
+	uint32_t sbr_ps);
+
+int q6asm_cfg_dual_mono_aac(struct audio_client *ac,
+	uint16_t sce_left, uint16_t sce_right);
+
 int q6asm_enc_cfg_blk_qcelp(struct audio_client *ac, uint32_t frames_per_buf,
 		uint16_t min_rate, uint16_t max_rate,
 		uint16_t reduced_rate_level, uint16_t rate_modulation_cmd);
@@ -218,6 +233,12 @@ int q6asm_enc_cfg_blk_amrnb(struct audio_client *ac, uint32_t frames_per_buf,
 int q6asm_media_format_block_pcm(struct audio_client *ac,
 			uint32_t rate, uint32_t channels);
 
+int q6asm_media_format_block_aac(struct audio_client *ac,
+			struct asm_aac_cfg *cfg);
+
+int q6asm_media_format_block_multi_aac(struct audio_client *ac,
+			struct asm_aac_cfg *cfg);
+
 int q6asm_media_format_block_wma(struct audio_client *ac,
 			void *cfg);
 
@@ -230,6 +251,14 @@ int q6asm_equalizer(struct audio_client *ac, void *eq);
 /* Send Volume Command */
 int q6asm_set_volume(struct audio_client *ac, int volume);
 
+/* Set SoftPause Params */
+int q6asm_set_softpause(struct audio_client *ac,
+			struct asm_softpause_params *param);
+
+/* Set Softvolume Params */
+int q6asm_set_softvolume(struct audio_client *ac,
+			struct asm_softvolume_params *param);
+
 /* Send left-right channel gain */
 int q6asm_set_lrgain(struct audio_client *ac, int left_gain, int right_gain);
 
@@ -240,4 +269,10 @@ uint64_t q6asm_get_session_time(struct audio_client *ac);
 
 /* Client can set the IO mode to either AIO/SIO mode */
 int q6asm_set_io_mode(struct audio_client *ac, uint32_t mode);
+
+#ifdef CONFIG_MSM8X60_RTAC
+/* Get Service ID for APR communication */
+int q6asm_get_apr_service_id(int session_id);
+#endif
+
 #endif /* __Q6_ASM_H__ */

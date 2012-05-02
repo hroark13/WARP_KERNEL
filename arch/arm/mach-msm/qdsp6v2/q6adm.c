@@ -19,13 +19,19 @@
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/jiffies.h>
+#include <linux/uaccess.h>
 #include <asm/atomic.h>
 #include <mach/qdsp6v2/apr_audio.h>
+#include <mach/qdsp6v2/q6afe.h>
+#include <mach/qdsp6v2/audio_dev_ctl.h>
 #include "audio_acdb.h"
+#include "rtac.h"
 
 #define TIMEOUT_MS 1000
 #define AUDIO_RX 0x0
 #define AUDIO_TX 0x1
+#define RESET_COPP_ID 99
+#define INVALID_COPP_ID 0xFF
 
 struct adm_ctl {
 	void *apr;
@@ -40,23 +46,51 @@ static struct adm_ctl			this_adm;
 static int32_t adm_callback(struct apr_client_data *data, void *priv)
 {
 	uint32_t *payload;
+	int i, index;
 	payload = data->payload;
+
+	if (data->opcode == RESET_EVENTS) {
+		pr_debug("adm_callback: Reset event is received: %d %d apr[%p]\n",
+				data->reset_event, data->reset_proc,
+				this_adm.apr);
+		if (this_adm.apr) {
+			apr_reset(this_adm.apr);
+			for (i = 0; i < AFE_MAX_PORTS; i++) {
+				atomic_set(&this_adm.copp_id[i], RESET_COPP_ID);
+				atomic_set(&this_adm.copp_cnt[i], 0);
+				atomic_set(&this_adm.copp_stat[i], 0);
+			}
+			this_adm.apr = NULL;
+		}
+		return 0;
+	}
+
 	pr_debug("%s: code = 0x%x %x %x size = %d\n", __func__,
 			data->opcode, payload[0], payload[1],
 					data->payload_size);
 
 	if (data->payload_size) {
+		index = afe_get_port_index(data->token);
+		pr_debug("%s: Port ID %d, index %d\n", __func__,
+			data->token, index);
+
 		if (data->opcode == APR_BASIC_RSP_RESULT) {
+			pr_debug("APR_BASIC_RSP_RESULT\n");
 			switch (payload[0]) {
+			case ADM_CMD_SET_PARAMS:
+#ifdef CONFIG_MSM8X60_RTAC
+				if (rtac_make_adm_callback(payload,
+						data->payload_size))
+					break;
+#endif
 			case ADM_CMD_COPP_CLOSE:
 			case ADM_CMD_MEMORY_MAP:
 			case ADM_CMD_MEMORY_UNMAP:
 			case ADM_CMD_MEMORY_MAP_REGIONS:
 			case ADM_CMD_MEMORY_UNMAP_REGIONS:
 			case ADM_CMD_MATRIX_MAP_ROUTINGS:
-			case ADM_CMD_SET_PARAMS:
-				atomic_set(&this_adm.copp_stat[data->token],
-									1);
+				pr_debug("ADM_CMD_MATRIX_MAP_ROUTINGS\n");
+				atomic_set(&this_adm.copp_stat[index], 1);
 				wake_up(&this_adm.wait);
 				break;
 			default:
@@ -70,14 +104,27 @@ static int32_t adm_callback(struct apr_client_data *data, void *priv)
 		switch (data->opcode) {
 		case ADM_CMDRSP_COPP_OPEN: {
 			struct adm_copp_open_respond *open = data->payload;
-			atomic_set(&this_adm.copp_id[data->token],
-							open->copp_id);
-			atomic_set(&this_adm.copp_stat[data->token], 1);
+			if (open->copp_id == INVALID_COPP_ID) {
+				pr_err("%s: invalid coppid rxed %d\n",
+						__func__, open->copp_id);
+				atomic_set(&this_adm.copp_stat[index], 1);
+				wake_up(&this_adm.wait);
+				break;
+			}
+			atomic_set(&this_adm.copp_id[index], open->copp_id);
+			atomic_set(&this_adm.copp_stat[index], 1);
 			pr_debug("%s: coppid rxed=%d\n", __func__,
 							open->copp_id);
 			wake_up(&this_adm.wait);
 			}
 			break;
+#ifdef CONFIG_MSM8X60_RTAC
+		case ADM_CMDRSP_GET_PARAMS:
+			pr_debug("%s: ADM_CMDRSP_GET_PARAMS\n", __func__);
+			rtac_make_adm_callback(payload,
+				data->payload_size);
+			break;
+#endif
 		default:
 			pr_err("%s: Unknown cmd:0x%x\n", __func__,
 							data->opcode);
@@ -91,7 +138,9 @@ void send_cal(int port_id, struct acdb_cal_block *aud_cal)
 {
 	s32				result;
 	struct adm_set_params_command	adm_params;
-	pr_debug("%s: Port id %d\n", __func__, port_id);
+	int index = afe_get_port_index(port_id);
+
+	pr_debug("%s: Port id %d, index %d\n", __func__, port_id, index);
 
 	if (!aud_cal || aud_cal->cal_size == 0) {
 		pr_err("%s: No calibration data to send!\n", __func__);
@@ -107,13 +156,13 @@ void send_cal(int port_id, struct acdb_cal_block *aud_cal)
 	adm_params.hdr.src_port = port_id;
 	adm_params.hdr.dest_svc = APR_SVC_ADM;
 	adm_params.hdr.dest_domain = APR_DOMAIN_ADSP;
-	adm_params.hdr.dest_port = atomic_read(&this_adm.copp_id[port_id]);
+	adm_params.hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
 	adm_params.hdr.token = port_id;
 	adm_params.hdr.opcode = ADM_CMD_SET_PARAMS;
 	adm_params.payload = aud_cal->cal_paddr;
 	adm_params.payload_size = aud_cal->cal_size;
 
-	atomic_set(&this_adm.copp_stat[port_id], 0);
+	atomic_set(&this_adm.copp_stat[index], 0);
 	pr_debug("%s: Sending SET_PARAMS payload = 0x%x, size = %d\n",
 		__func__, adm_params.payload, adm_params.payload_size);
 	result = apr_send_pkt(this_adm.apr, (uint32_t *)&adm_params);
@@ -124,7 +173,7 @@ void send_cal(int port_id, struct acdb_cal_block *aud_cal)
 	}
 	/* Wait for the callback */
 	result = wait_event_timeout(this_adm.wait,
-		atomic_read(&this_adm.copp_stat[port_id]),
+		atomic_read(&this_adm.copp_stat[index]),
 		msecs_to_jiffies(TIMEOUT_MS));
 	if (!result)
 		pr_err("%s: Set params timed out port = %d, payload = 0x%x\n",
@@ -160,22 +209,23 @@ done:
 	return;
 }
 
-int adm_open(int port_id, int session_id , int path,
-				int rate, int channel_mode,
-				int topology)
+int adm_open(int port_id, int path, int rate, int channel_mode, int topology)
 {
 	struct adm_copp_open_command	open;
-	struct adm_routings_command	route;
 	int ret = 0;
+	int index;
 
-	pr_debug("%s: port %d session 0x%x path:%d rate:%d mode:%d\n", __func__,
-				port_id, session_id, path, rate, channel_mode);
+	pr_debug("%s: port %d path:%d rate:%d mode:%d\n", __func__,
+				port_id, path, rate, channel_mode);
+	pr_err("Topology = %x\n", topology);
 
-	if (port_id >= AFE_MAX_PORTS) {
-		pr_err("%s port idi[%d] out of limit[%d]\n", __func__,
-						port_id, AFE_MAX_PORTS);
+	if (afe_validate_port(port_id) < 0) {
+		pr_err("%s port idi[%d] is invalid\n", __func__, port_id);
 		return -ENODEV;
 	}
+
+	index = afe_get_port_index(port_id);
+	pr_debug("%s: Port ID %d, index %d\n", __func__, port_id, index);
 
 	if (this_adm.apr == NULL) {
 		this_adm.apr = apr_register("ADSP", "ADM", adm_callback,
@@ -185,11 +235,14 @@ int adm_open(int port_id, int session_id , int path,
 			ret = -ENODEV;
 			return ret;
 		}
+#ifdef CONFIG_MSM8X60_RTAC
+		rtac_set_adm_handle(this_adm.apr);
+#endif
 	}
 
 
 	/* Create a COPP if port id are not enabled */
-	if (atomic_read(&this_adm.copp_cnt[port_id]) == 0) {
+	if (atomic_read(&this_adm.copp_cnt[index]) == 0) {
 
 		open.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
@@ -204,7 +257,7 @@ int adm_open(int port_id, int session_id , int path,
 		open.hdr.opcode = ADM_CMD_COPP_OPEN;
 
 		open.mode = path;
-		open.endpoint_id1 = port_id & 0x00FF;
+		open.endpoint_id1 = port_id;
 		open.endpoint_id2 = 0xFFFF;
 		open.topology_id  = topology;
 
@@ -216,7 +269,7 @@ int adm_open(int port_id, int session_id , int path,
 			open.endpoint_id1, open.rate,\
 			open.topology_id);
 
-		atomic_set(&this_adm.copp_stat[port_id], 0);
+		atomic_set(&this_adm.copp_stat[index], 0);
 
 		ret = apr_send_pkt(this_adm.apr, (uint32_t *)&open);
 		if (ret < 0) {
@@ -227,7 +280,7 @@ int adm_open(int port_id, int session_id , int path,
 		}
 		/* Wait for the callback with copp id */
 		ret = wait_event_timeout(this_adm.wait,
-			atomic_read(&this_adm.copp_stat[port_id]),
+			atomic_read(&this_adm.copp_stat[index]),
 			msecs_to_jiffies(TIMEOUT_MS));
 		if (!ret) {
 			pr_err("%s ADM open failed for port %d\n", __func__,
@@ -236,23 +289,52 @@ int adm_open(int port_id, int session_id , int path,
 			goto fail_cmd;
 		}
 	}
-	atomic_inc(&this_adm.copp_cnt[port_id]);
+	atomic_inc(&this_adm.copp_cnt[index]);
+	return 0;
+
+fail_cmd:
+
+	return ret;
+}
+
+int adm_matrix_map(int session_id, int path, int num_copps,
+			unsigned int *port_id, int copp_id)
+{
+	struct adm_routings_command	route;
+	int ret = 0, i = 0;
+	/* Assumes port_ids have already been validated during adm_open */
+	int index = afe_get_port_index(copp_id);
+
+	pr_debug("%s: session 0x%x path:%d num_copps:%d port_id[0]:%d\n",
+		 __func__, session_id, path, num_copps, port_id[0]);
+
 	route.hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 				APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
 	route.hdr.pkt_size = sizeof(route);
 	route.hdr.src_svc = 0;
 	route.hdr.src_domain = APR_DOMAIN_APPS;
-	route.hdr.src_port = port_id;
+	route.hdr.src_port = copp_id;
 	route.hdr.dest_svc = APR_SVC_ADM;
 	route.hdr.dest_domain = APR_DOMAIN_ADSP;
-	route.hdr.dest_port = atomic_read(&this_adm.copp_id[port_id]);
-	route.hdr.token = port_id;
+	route.hdr.dest_port = atomic_read(&this_adm.copp_id[index]);
+	route.hdr.token = copp_id;
 	route.hdr.opcode = ADM_CMD_MATRIX_MAP_ROUTINGS;
 	route.num_sessions = 1;
-	route.sessions[0].id = session_id;
-	route.sessions[0].num_copps = 1;
-	route.sessions[0].copp_id[0] =
-			atomic_read(&this_adm.copp_id[port_id]);
+	route.session[0].id = session_id;
+	route.session[0].num_copps = num_copps;
+
+	for (i = 0; i < num_copps; i++) {
+		int tmp;
+		tmp = afe_get_port_index(port_id[i]);
+
+		pr_debug("%s: port_id[%d]: %d, index: %d\n", __func__, i,
+			 port_id[i], tmp);
+
+		route.session[0].copp_id[i] =
+					atomic_read(&this_adm.copp_id[tmp]);
+	}
+	if (num_copps % 2)
+		route.session[0].copp_id[i] = 0;
 
 	switch (path) {
 	case 0x1:
@@ -266,25 +348,28 @@ int adm_open(int port_id, int session_id , int path,
 		pr_err("%s: Wrong path set[%d]\n", __func__, path);
 		break;
 	}
-	atomic_set(&this_adm.copp_stat[port_id], 0);
+	atomic_set(&this_adm.copp_stat[index], 0);
 
 	ret = apr_send_pkt(this_adm.apr, (uint32_t *)&route);
 	if (ret < 0) {
 		pr_err("%s: ADM routing for port %d failed\n",
-					__func__, port_id);
+					__func__, port_id[0]);
 		ret = -EINVAL;
 		goto fail_cmd;
 	}
 	ret = wait_event_timeout(this_adm.wait,
-				atomic_read(&this_adm.copp_stat[port_id]),
+				atomic_read(&this_adm.copp_stat[index]),
 				msecs_to_jiffies(TIMEOUT_MS));
 	if (!ret) {
 		pr_err("%s: ADM cmd Route failed for port %d\n",
-					__func__, port_id);
+					__func__, port_id[0]);
 		ret = -EINVAL;
 		goto fail_cmd;
 	}
-	send_adm_cal(port_id, path);
+
+	for (i = 0; i < num_copps; i++)
+		send_adm_cal(port_id[i], path);
+
 	return 0;
 
 fail_cmd:
@@ -312,12 +397,19 @@ int adm_memory_map_regions(uint32_t *buf_add, uint32_t mempool_id,
 			ret = -ENODEV;
 			return ret;
 		}
+#ifdef CONFIG_MSM8X60_RTAC
+		rtac_set_adm_handle(this_adm.apr);
+#endif
 	}
 
 	cmd_size = sizeof(struct adm_cmd_memory_map_regions)
 			+ sizeof(struct adm_memory_map_regions) * bufcnt;
 
 	mmap_region_cmd = kzalloc(cmd_size, GFP_KERNEL);
+	if (!mmap_region_cmd) {
+		pr_err("%s: allocate mmap_region_cmd failed\n", __func__);
+		return -ENOMEM;
+	}
 	mmap_regions = (struct adm_cmd_memory_map_regions *)mmap_region_cmd;
 	mmap_regions->hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 						APR_HDR_LEN(APR_HDR_SIZE),
@@ -384,6 +476,10 @@ int adm_memory_unmap_regions(uint32_t *buf_add, uint32_t *bufsz,
 			+ sizeof(struct adm_memory_unmap_regions) * bufcnt;
 
 	unmap_region_cmd = kzalloc(cmd_size, GFP_KERNEL);
+	if (!unmap_region_cmd) {
+		pr_err("%s: allocate unmap_region_cmd failed\n", __func__);
+		return -ENOMEM;
+	}
 	unmap_regions = (struct adm_cmd_memory_unmap_regions *)
 						unmap_region_cmd;
 	unmap_regions->hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
@@ -427,21 +523,38 @@ fail_cmd:
 	return ret;
 }
 
+#ifdef CONFIG_MSM8X60_RTAC
+int adm_get_copp_id(int port_id)
+{
+	pr_debug("%s\n", __func__);
+
+	if (port_id < 0) {
+		pr_err("%s: invalid port_id = %d\n", __func__, port_id);
+		return -EINVAL;
+	}
+
+	return atomic_read(&this_adm.copp_id[port_id]);
+}
+#endif
+
 int adm_close(int port_id)
 {
 	struct apr_hdr close;
 
 	int ret = 0;
+	int index = afe_get_port_index(port_id);
+	if (afe_validate_port(port_id) < 0)
+		return -EINVAL;
 
-	pr_info("%s port_id=%d\n", __func__, port_id);
+	pr_info("%s port_id=%d index %d\n", __func__, port_id, index);
 
-	if (!(atomic_read(&this_adm.copp_cnt[port_id]))) {
+	if (!(atomic_read(&this_adm.copp_cnt[index]))) {
 		pr_err("%s: copp count for port[%d]is 0\n", __func__, port_id);
 
 		goto fail_cmd;
 	}
-	atomic_dec(&this_adm.copp_cnt[port_id]);
-	if (!(atomic_read(&this_adm.copp_cnt[port_id]))) {
+	atomic_dec(&this_adm.copp_cnt[index]);
+	if (!(atomic_read(&this_adm.copp_cnt[index]))) {
 
 		close.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
 			APR_HDR_LEN(APR_HDR_SIZE), APR_PKT_VER);
@@ -451,19 +564,19 @@ int adm_close(int port_id)
 		close.src_port = port_id;
 		close.dest_svc = APR_SVC_ADM;
 		close.dest_domain = APR_DOMAIN_ADSP;
-		close.dest_port = atomic_read(&this_adm.copp_id[port_id]);
+		close.dest_port = atomic_read(&this_adm.copp_id[index]);
 		close.token = port_id;
 		close.opcode = ADM_CMD_COPP_CLOSE;
 
-		atomic_set(&this_adm.copp_id[port_id], 0);
-		atomic_set(&this_adm.copp_stat[port_id], 0);
+		atomic_set(&this_adm.copp_id[index], RESET_COPP_ID);
+		atomic_set(&this_adm.copp_stat[index], 0);
 
 
-		pr_debug("%s:coppid %d portid=%d coppcnt=%d\n",
+		pr_debug("%s:coppid %d portid=%d index=%d coppcnt=%d\n",
 				__func__,
-				atomic_read(&this_adm.copp_id[port_id]),
-				port_id,
-				atomic_read(&this_adm.copp_cnt[port_id]));
+				atomic_read(&this_adm.copp_id[index]),
+				port_id, index,
+				atomic_read(&this_adm.copp_cnt[index]));
 
 		ret = apr_send_pkt(this_adm.apr, (uint32_t *)&close);
 		if (ret < 0) {
@@ -473,7 +586,7 @@ int adm_close(int port_id)
 		}
 
 		ret = wait_event_timeout(this_adm.wait,
-				atomic_read(&this_adm.copp_stat[port_id]),
+				atomic_read(&this_adm.copp_stat[index]),
 				msecs_to_jiffies(TIMEOUT_MS));
 		if (!ret) {
 			pr_err("%s: ADM cmd Route failed for port %d\n",
@@ -481,6 +594,7 @@ int adm_close(int port_id)
 			ret = -EINVAL;
 			goto fail_cmd;
 		}
+
 	}
 
 fail_cmd:
@@ -494,7 +608,7 @@ static int __init adm_init(void)
 	this_adm.apr = NULL;
 
 	for (i = 0; i < AFE_MAX_PORTS; i++) {
-		atomic_set(&this_adm.copp_id[i], 0);
+		atomic_set(&this_adm.copp_id[i], RESET_COPP_ID);
 		atomic_set(&this_adm.copp_cnt[i], 0);
 		atomic_set(&this_adm.copp_stat[i], 0);
 	}

@@ -44,13 +44,14 @@ struct pcm {
 	uint32_t buffer_size;
 	uint32_t buffer_count;
 	uint32_t rec_mode;
+	uint32_t stream_event;
+	uint32_t volume;
 	atomic_t out_count;
 	atomic_t out_enabled;
 	atomic_t out_opened;
 	atomic_t out_stopped;
 	atomic_t out_prefill;
 	struct wake_lock wakelock;
-	struct wake_lock idlelock;
 };
 
 void pcm_out_cb(uint32_t opcode, uint32_t token,
@@ -75,14 +76,12 @@ static void audio_prevent_sleep(struct pcm *audio)
 {
 	pr_debug("%s:\n", __func__);
 	wake_lock(&audio->wakelock);
-	wake_lock(&audio->idlelock);
 }
 
 static void audio_allow_sleep(struct pcm *audio)
 {
 	pr_debug("%s:\n", __func__);
 	wake_unlock(&audio->wakelock);
-	wake_unlock(&audio->idlelock);
 }
 
 static int pcm_out_enable(struct pcm *pcm)
@@ -132,6 +131,33 @@ fail:
 	return rc;
 }
 
+static void pcm_event_listner(u32 evt_id, union auddev_evt_data *evt_payload,
+							void *private_data)
+{
+	struct pcm *pcm = (struct pcm *) private_data;
+	int rc  = 0;
+
+	switch (evt_id) {
+	case AUDDEV_EVT_STREAM_VOL_CHG:
+		pcm->volume = evt_payload->session_vol;
+		pr_debug("%s: AUDDEV_EVT_STREAM_VOL_CHG, stream vol %d, "
+				"enabled = %d\n", __func__, pcm->volume,
+					atomic_read(&pcm->out_enabled));
+		if (atomic_read(&pcm->out_enabled)) {
+			if (pcm->ac) {
+				rc = q6asm_set_volume(pcm->ac, pcm->volume);
+				if (rc < 0)
+					pr_err("%s: Send Volume command"
+					"failed rc=%d\n", __func__, rc);
+			}
+		}
+		break;
+	default:
+		pr_err("%s:ERROR:wrong event\n", __func__);
+		break;
+	}
+}
+
 static long pcm_out_ioctl(struct file *file, unsigned int cmd,
 				unsigned long arg)
 {
@@ -173,6 +199,20 @@ static long pcm_out_ioctl(struct file *file, unsigned int cmd,
 		}
 		audio_prevent_sleep(pcm);
 		atomic_set(&pcm->out_enabled, 1);
+
+		rc = q6asm_set_volume(pcm->ac, pcm->volume);
+		if (rc < 0)
+			pr_err("%s: Send Volume command failed rc=%d\n",
+							__func__, rc);
+		rc = q6asm_set_lrgain(pcm->ac, 0x2000, 0x2000);
+		if (rc < 0)
+			pr_err("%s: Send channel gain failed rc=%d\n",
+							__func__, rc);
+		/* disable mute by default */
+		rc = q6asm_set_mute(pcm->ac, 0);
+		if (rc < 0)
+			pr_err("%s: Send mute command failed rc=%d\n",
+							__func__, rc);
 		break;
 	}
 	case AUDIO_GET_SESSION_ID: {
@@ -264,6 +304,8 @@ static int pcm_out_open(struct inode *inode, struct file *file)
 	pcm->sample_rate = 44100;
 	pcm->buffer_size = BUFSZ;
 	pcm->buffer_count = MAX_BUF;
+	pcm->stream_event = AUDDEV_EVT_STREAM_VOL_CHG;
+	pcm->volume = 0x2000;
 
 	pcm->ac = q6asm_audio_client_alloc((app_cb)pcm_out_cb, (void *)pcm);
 	if (!pcm->ac) {
@@ -291,8 +333,16 @@ static int pcm_out_open(struct inode *inode, struct file *file)
 	atomic_set(&pcm->out_opened, 1);
 	snprintf(name, sizeof name, "audio_pcm_%x", pcm->ac->session);
 	wake_lock_init(&pcm->wakelock, WAKE_LOCK_SUSPEND, name);
-	snprintf(name, sizeof name, "audio_pcm_idle_%x", pcm->ac->session);
-	wake_lock_init(&pcm->idlelock, WAKE_LOCK_IDLE, name);
+
+	rc = auddev_register_evt_listner(pcm->stream_event,
+					AUDDEV_CLNT_DEC,
+					pcm->ac->session,
+					pcm_event_listner,
+					(void *)pcm);
+	if (rc < 0) {
+		pr_err("%s: failed to register listner\n", __func__);
+		goto fail;
+	}
 
 	file->private_data = pcm;
 	pr_info("[%s:%s] open session id[%d]\n", __MM_FILE__,
@@ -330,7 +380,7 @@ static ssize_t pcm_out_write(struct file *file, const char __user *buf,
 	while (count > 0) {
 		rc = wait_event_timeout(pcm->write_wait,
 				(atomic_read(&pcm->out_count) ||
-				atomic_read(&pcm->out_stopped)), 5 * HZ);
+				atomic_read(&pcm->out_stopped)), 1 * HZ);
 		if (!rc) {
 			pr_err("%s: wait_event_timeout failed for session %d\n",
 				__func__, pcm->ac->session);
@@ -382,10 +432,10 @@ static int pcm_out_release(struct inode *inode, struct file *file)
 	if (pcm->ac)
 		pcm_out_disable(pcm);
 	msm_clear_session_id(pcm->ac->session);
+	auddev_unregister_evt_listner(AUDDEV_CLNT_DEC, pcm->ac->session);
 	q6asm_audio_client_free(pcm->ac);
 	audio_allow_sleep(pcm);
 	wake_lock_destroy(&pcm->wakelock);
-	wake_lock_destroy(&pcm->idlelock);
 	mutex_destroy(&pcm->lock);
 	mutex_destroy(&pcm->write_lock);
 	kfree(pcm);

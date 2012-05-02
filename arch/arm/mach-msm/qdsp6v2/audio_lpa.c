@@ -39,6 +39,7 @@
 #include "audio_lpa.h"
 
 #include <linux/msm_audio.h>
+#include <linux/wakelock.h>
 #include <mach/qdsp6v2/audio_dev_ctl.h>
 
 #include <mach/debug_mm.h>
@@ -155,6 +156,19 @@ static void lpa_listner(u32 evt_id, union auddev_evt_data *evt_payload,
 		break;
 	}
 }
+
+static void audlpa_prevent_sleep(struct audio *audio)
+{
+	pr_debug("%s:\n", __func__);
+	wake_lock(&audio->wakelock);
+}
+
+static void audlpa_allow_sleep(struct audio *audio)
+{
+	pr_debug("%s:\n", __func__);
+	wake_unlock(&audio->wakelock);
+}
+
 /* must be called with audio->lock held */
 static int audio_enable(struct audio *audio)
 {
@@ -404,8 +418,8 @@ static long audlpa_process_event_req(struct audio *audio, void __user *arg)
 		rc = -1;
 	spin_unlock(&audio->event_queue_lock);
 
-	if (drv_evt->event_type == AUDIO_EVENT_WRITE_DONE ||
-	    drv_evt->event_type == AUDIO_EVENT_READ_DONE) {
+	if (drv_evt && (drv_evt->event_type == AUDIO_EVENT_WRITE_DONE ||
+	    drv_evt->event_type == AUDIO_EVENT_READ_DONE)) {
 		pr_debug("%s: AUDIO_EVENT_WRITE_DONE completing\n", __func__);
 		mutex_lock(&audio->lock);
 		audlpa_pmem_fixup(audio, drv_evt->payload.aio_buf.buf_addr,
@@ -616,6 +630,7 @@ static int audlpa_aio_buf_add(struct audio *audio, unsigned dir,
 		audlpa_async_send_data(audio, 0, 0);
 	} else {
 		/* read */
+		kfree(buf_node);
 	}
 	return 0;
 }
@@ -765,11 +780,30 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			rc = -EFAULT;
 			goto fail;
 		} else {
+			struct asm_softpause_params softpause = {
+				.enable = SOFT_PAUSE_ENABLE,
+				.period = SOFT_PAUSE_PERIOD,
+				.step = SOFT_PAUSE_STEP,
+				.rampingcurve = SOFT_PAUSE_CURVE_LINEAR,
+			};
+			struct asm_softvolume_params softvol = {
+				.period = SOFT_VOLUME_PERIOD,
+				.step = SOFT_VOLUME_STEP,
+				.rampingcurve = SOFT_VOLUME_CURVE_LINEAR,
+			};
 			audio->out_enabled = 1;
 			audio->out_needed = 1;
 			rc = q6asm_set_volume(audio->ac, audio->volume);
 			if (rc < 0)
 				pr_err("%s: Send Volume command failed rc=%d\n",
+					__func__, rc);
+			rc = q6asm_set_softpause(audio->ac, &softpause);
+			if (rc < 0)
+				pr_err("%s: Send SoftPause Param failed rc=%d\n",
+					__func__, rc);
+			rc = q6asm_set_softvolume(audio->ac, &softvol);
+			if (rc < 0)
+				pr_err("%s: Send SoftVolume Param failed rc=%d\n",
 					__func__, rc);
 			rc = q6asm_set_lrgain(audio->ac, 0x2000, 0x2000);
 			if (rc < 0)
@@ -785,6 +819,7 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 					__func__);
 			if (audio->stopped == 1)
 				audio->stopped = 0;
+			audlpa_prevent_sleep(audio);
 		}
 		break;
 
@@ -796,6 +831,7 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		audio->out_enabled = 0;
 		audio->out_needed = 0;
 		audio->drv_status &= ~ADRV_STATUS_PAUSE;
+		audlpa_allow_sleep(audio);
 		break;
 
 	case AUDIO_FLUSH:
@@ -1041,8 +1077,11 @@ static int audio_release(struct inode *inode, struct file *file)
 		(int)audio, audio->ac->session);
 
 	mutex_lock(&audio->lock);
+	audio->wflush = 1;
+	if (audio->out_enabled)
+		audlpa_async_flush(audio);
+	audio->wflush = 0;
 	audlpa_unmap_pmem_region(audio);
-	audlpa_async_flush(audio);
 	audio_disable(audio);
 	msm_clear_session_id(audio->ac->session);
 	auddev_unregister_evt_listner(AUDDEV_CLNT_DEC, audio->ac->session);
@@ -1059,6 +1098,10 @@ static int audio_release(struct inode *inode, struct file *file)
 	audlpa_reset_event_queue(audio);
 	iounmap(audio->data);
 	pmem_kfree(audio->phys);
+	if (audio->stopped == 0)
+		audlpa_allow_sleep(audio);
+	wake_lock_destroy(&audio->wakelock);
+
 	mutex_unlock(&audio->lock);
 #ifdef CONFIG_DEBUG_FS
 	if (audio->dentry)
@@ -1177,6 +1220,7 @@ static int audio_open(struct inode *inode, struct file *file)
 	/* 4 bytes represents decoder number, 1 byte for terminate string */
 	char name[sizeof "msm_lpa_" + 5];
 #endif
+	char wake_lock_name[24];
 
 	/* Allocate audio instance, set to zero */
 	audio = kzalloc(sizeof(struct audio), GFP_KERNEL);
@@ -1237,6 +1281,9 @@ static int audio_open(struct inode *inode, struct file *file)
 	init_waitqueue_head(&audio->wait);
 	init_waitqueue_head(&audio->event_wait);
 	spin_lock_init(&audio->event_queue_lock);
+	snprintf(wake_lock_name, sizeof wake_lock_name, "audio_lpa_%x",
+		audio->ac->session);
+	wake_lock_init(&audio->wakelock, WAKE_LOCK_SUSPEND, wake_lock_name);
 
 	audio->out_sample_rate = 44100;
 	audio->out_channel_mode = 2;

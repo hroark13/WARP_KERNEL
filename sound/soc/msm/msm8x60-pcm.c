@@ -1,21 +1,19 @@
-/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
  *
- * All source code in this file is licensed under the following license except
- * where indicated.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
- * See the GNU General Public License for more details.
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, you can find it at http://www.fsf.org.
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
-
 
 #include <linux/init.h>
 #include <linux/err.h>
@@ -56,11 +54,11 @@ static struct snd_pcm_hardware msm_pcm_hardware = {
 	.rate_max =             48000,
 	.channels_min =         1,
 	.channels_max =         2,
-	.buffer_bytes_max =     960 * 10,
-	.period_bytes_min =     960 * 5,
-	.period_bytes_max =     960 * 5,
-	.periods_min =          2,
-	.periods_max =          2,
+	.buffer_bytes_max =     960 * 8,
+	.period_bytes_min =	960,
+	.period_bytes_max =     960,
+	.periods_min =          8,
+	.periods_max =          8,
 	.fifo_size =            0,
 };
 
@@ -246,6 +244,7 @@ static int msm_pcm_playback_prepare(struct snd_pcm_substream *substream)
 	struct msm_audio *prtd = runtime->private_data;
 	int ret;
 	int dev_rate = 48000;
+	int i = 0;
 
 	pr_debug("%s\n", __func__);
 	prtd->pcm_size = snd_pcm_lib_buffer_bytes(substream);
@@ -264,17 +263,17 @@ static int msm_pcm_playback_prepare(struct snd_pcm_substream *substream)
 
 	atomic_set(&prtd->out_count, runtime->periods);
 	atomic_set(&prtd->in_count, 0);
-	pr_debug("prtd->session_id = %d, copp_id= %d",
-			prtd->session_id,
-			session_route.playback_session[substream->number]);
-	if (session_route.playback_session[substream->number]
+	for (i = 0; i < MAX_COPP; i++) {
+		pr_debug("prtd->session_id = %d, copp_id= %d",
+				prtd->session_id, i);
+		if (session_route.playback_session[substream->number][i]
 			!= DEVICE_IGNORE) {
-		if (session_route.playback_session[substream->number]
-				== PCM_RX)
-			dev_rate = 8000;
-		msm_snddev_set_dec(prtd->session_id,
-			session_route.playback_session[substream->number],
-			1, dev_rate, runtime->channels);
+			pr_err("Device active\n");
+			if (i == PCM_RX)
+				dev_rate = 8000;
+			msm_snddev_set_dec(prtd->session_id,
+					i, 1, dev_rate, runtime->channels);
+		}
 	}
 	prtd->enabled = 1;
 	prtd->cmd_ack = 0;
@@ -310,17 +309,17 @@ static int msm_pcm_capture_prepare(struct snd_pcm_substream *substream)
 	for (i = 0; i < runtime->periods; i++)
 		q6asm_read_nolock(prtd->audio_client);
 	prtd->periods = runtime->periods;
-	pr_debug("prtd->session_id = %d, copp_id= %d",
+
+	for (i = 0; i < MAX_COPP; i++) {
+		pr_debug("prtd->session_id = %d, copp_id= %d",
 			prtd->session_id,
-			session_route.capture_session[substream->number]);
-	if (session_route.capture_session[substream->number]
-			!= DEVICE_IGNORE) {
-		if (session_route.capture_session[substream->number]
-				== PCM_TX)
-			dev_rate = 8000;
-		msm_snddev_set_enc(prtd->session_id,
-			session_route.capture_session[substream->number],
-			1, dev_rate, 1);
+			session_route.capture_session[prtd->session_id][i]);
+		if (session_route.capture_session[prtd->session_id][i]
+					!= DEVICE_IGNORE) {
+			if (i == PCM_RX)
+				dev_rate = 8000;
+			msm_snddev_set_enc(prtd->session_id, i, 1, dev_rate, 1);
+		}
 	}
 	prtd->enabled = 1;
 
@@ -530,6 +529,7 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 				prtd->cmd_ack, 5 * HZ);
 	if (ret < 0)
 		pr_err("%s: CMD_EOS failed\n", __func__);
+	q6asm_cmd(prtd->audio_client, CMD_CLOSE);
 	q6asm_audio_client_buf_free_contiguous(dir,
 				prtd->audio_client);
 
@@ -537,7 +537,6 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 	auddev_unregister_evt_listner(AUDDEV_CLNT_DEC,
 		substream->number);
 	pr_debug("%s\n", __func__);
-	q6asm_cmd(prtd->audio_client, CMD_CLOSE);
 	msm_clear_session_id(prtd->session_id);
 	q6asm_audio_client_free(prtd->audio_client);
 	kfree(prtd);
@@ -626,11 +625,11 @@ static int msm_pcm_capture_close(struct snd_pcm_substream *substream)
 	int dir = OUT;
 
 	pr_debug("%s\n", __func__);
+	q6asm_cmd(prtd->audio_client, CMD_CLOSE);
 	q6asm_audio_client_buf_free_contiguous(dir,
 				prtd->audio_client);
 	auddev_unregister_evt_listner(AUDDEV_CLNT_ENC,
 		substream->number);
-	q6asm_cmd(prtd->audio_client, CMD_CLOSE);
 	msm_clear_session_id(prtd->session_id);
 	q6asm_audio_client_free(prtd->audio_client);
 	kfree(prtd);

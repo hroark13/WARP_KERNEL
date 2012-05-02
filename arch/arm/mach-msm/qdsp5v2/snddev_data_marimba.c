@@ -1208,6 +1208,49 @@ static struct platform_device msm_ispeaker_tx_device = {
 	.dev = { .platform_data = &snddev_ispeaker_tx_data },
 };
 
+//ZTE_AUDIO_GUSHENGGAO_20110829 added for aux MIC test start
+static struct adie_codec_action_unit ispeaker_aux_tx_48KHz_osr256_actions[] =
+	SPEAKER_AUX_TX_48000_OSR_256;
+
+static struct adie_codec_hwsetting_entry ispeaker_aux_tx_settings[] = {
+
+	{
+		.freq_plan = 48000,
+		.osr = 256,
+		.actions = ispeaker_aux_tx_48KHz_osr256_actions,
+		.action_sz = ARRAY_SIZE(ispeaker_aux_tx_48KHz_osr256_actions),
+	}
+};
+
+static struct adie_codec_dev_profile ispeaker_aux_tx_profile = {
+	.path_type = ADIE_CODEC_TX,
+	.settings = ispeaker_aux_tx_settings,
+	.setting_sz = ARRAY_SIZE(ispeaker_aux_tx_settings),
+};
+
+static enum hsed_controller ispk_aux_pmctl_id[] = {PM_HSED_CONTROLLER_0};
+
+static struct snddev_icodec_data snddev_ispeaker_aux_tx_data = {
+	.capability = (SNDDEV_CAP_TX | SNDDEV_CAP_VOICE),
+	.name = "auxmic_tx",
+	.copp_id = 0,
+	.acdb_id = ACDB_ID_SPKR_PHONE_MIC,
+	.profile = &ispeaker_aux_tx_profile,
+	.channel_mode = 1,
+	.pmctl_id = ispk_aux_pmctl_id,
+	.pmctl_id_sz = ARRAY_SIZE(ispk_aux_pmctl_id),
+	.default_sample_rate = 48000,
+	.pamp_on = msm_snddev_tx_route_config,
+	.pamp_off = msm_snddev_tx_route_deconfig,
+};
+
+static struct platform_device msm_ispeaker_aux_tx_device = {
+	.name = "snddev_icodec",
+	.id = 30,
+	.dev = { .platform_data = &snddev_ispeaker_aux_tx_data },
+};
+//ZTE_AUDIO_GUSHENGGAO_20110829 added for aux MIC test end
+
 static struct adie_codec_action_unit iearpiece_ffa_48KHz_osr256_actions[] =
 	HANDSET_RX_48000_OSR_256_FFA;
 
@@ -1608,6 +1651,7 @@ static struct platform_device *snd_devices_surf[] __initdata = {
 #if defined(ZTE_FEATURE_HAC)
 	&msm_ihac_rx_device, 	//zte_audio_gushenggao_20110525 added for hac device
 #endif
+	&msm_ispeaker_aux_tx_device,//ZTE_AUDIO_GUSHENGGAO_20110829 added for aux MIC test
 	&msm_fm_headset_stereo_tx_device, //zrlean
 	&msm_fm_headset_stereo_rx_device  //zrlean
 

@@ -63,7 +63,7 @@ static struct adie_codec_dev_profile iearpiece_ffa_profile = {
 };
 
 //ZTE_Audio_gushenggao_110725, for N850, start
-#if (defined(CONFIG_MACH_SEAN)) //songyy handset rx
+#if (defined(CONFIG_MACH_SEAN)) 
 static struct snddev_icodec_data snddev_iearpiece_ffa_data = {
 	.capability = (SNDDEV_CAP_RX | SNDDEV_CAP_VOICE),
 	.name = "handset_rx",
@@ -215,7 +215,7 @@ static struct adie_codec_dev_profile ispkr_stereo_profile = {
 };
 
 //ZTE_Audio_gushenggao_110725, for N850, start
-#if (defined(CONFIG_MACH_SEAN)||defined(CONFIG_MACH_SKATEPLUS)) //songyy speaker rx
+#if (defined(CONFIG_MACH_SEAN)) 
 static struct snddev_icodec_data snddev_ispkr_stereo_data = {
 	.capability = (SNDDEV_CAP_RX | SNDDEV_CAP_VOICE),
 	.name = "speaker_stereo_rx",
@@ -316,6 +316,24 @@ static struct platform_device  msm_snddev_mi2s_fm_tx_device = {
 	.dev = { .platform_data = &snddev_mi2s_fm_tx_data},
 };
 
+static struct snddev_mi2s_data snddev_mi2s_fm_rx_data = {
+	.capability = SNDDEV_CAP_RX ,
+	.name = "fmradio_stereo_rx",
+	.copp_id = 3,
+	.acdb_id = ACDB_ID_FM_RX,
+	.channel_mode = 2,
+	.sd_lines = MI2S_SD_3,
+	.route = NULL,
+	.deroute = NULL,
+	.default_sample_rate = 48000,
+};
+
+static struct platform_device  msm_snddev_mi2s_fm_rx_device = {
+	.name = "snddev_mi2s",
+	.id = 2,
+	.dev = { .platform_data = &snddev_mi2s_fm_rx_data},
+};
+
 static struct snddev_ecodec_data snddev_bt_sco_earpiece_data = {
 	.capability = (SNDDEV_CAP_RX | SNDDEV_CAP_VOICE),
 	.name = "bt_sco_rx",
@@ -389,8 +407,8 @@ static struct snddev_icodec_data snddev_ihs_stereo_rx_data = {
 	.voltage_off = msm_snddev_hsed_voltage_off,
 	.max_voice_rx_vol[VOC_NB_INDEX] = -700,
 	.min_voice_rx_vol[VOC_NB_INDEX] = -2200,
-	.max_voice_rx_vol[VOC_WB_INDEX] = -1400,
-	.min_voice_rx_vol[VOC_WB_INDEX] = -2900,
+	.max_voice_rx_vol[VOC_WB_INDEX] = -900,
+	.min_voice_rx_vol[VOC_WB_INDEX] = -2400,
 };
 
 static struct platform_device msm_headset_stereo_device = {
@@ -605,7 +623,7 @@ static const struct file_operations snddev_hsed_config_debug_fops = {
 #endif
 
 //ZTE_Audio_gushenggao_110725, for N850, start
-#if (defined(CONFIG_MACH_SEAN))  //songyy speaker tx
+#if (defined(CONFIG_MACH_SEAN)) 
 static struct adie_codec_action_unit imic_spkr_48KHz_osr256_actions[] =
 	AMIC_line_in_L_MONO_8000_OSR_256; /* 8000 profile also works for 48k */
 
@@ -664,6 +682,49 @@ static struct platform_device msm_ispkr_mic_device = {
 	.id = 18,
 	.dev = { .platform_data = &snddev_ispkr_mic_data },
 };
+
+//ZTE_AUDIO_GUSHENGGAO_20110829 added for aux MIC test start
+static struct adie_codec_action_unit imic_aux_48KHz_osr256_actions[] =
+	AMIC_AUX_MONO_8000_OSR_256; /* 8000 profile also works for 48k */
+
+static struct adie_codec_hwsetting_entry imic_aux_settings[] = {
+	{
+		.freq_plan = 48000,
+		.osr = 256,
+		.actions = imic_aux_48KHz_osr256_actions,
+		.action_sz = ARRAY_SIZE(imic_aux_48KHz_osr256_actions),
+	}
+};
+
+
+static struct adie_codec_dev_profile imic_aux_profile = {
+	.path_type = ADIE_CODEC_TX,
+	.settings = imic_aux_settings,
+	.setting_sz = ARRAY_SIZE(imic_aux_settings),
+};
+
+static enum hsed_controller ispk_aux_pmctl_id[] = {PM_HSED_CONTROLLER_0};
+
+static struct snddev_icodec_data snddev_ispkr_aux_mic_data = {
+	.capability = (SNDDEV_CAP_TX | SNDDEV_CAP_VOICE),
+	.name = "auxmic_tx",
+	.copp_id = 0,
+	.acdb_id = ACDB_ID_SPKR_PHONE_MIC,
+	.profile = &imic_aux_profile,
+	.channel_mode = 1,
+	.pmctl_id = ispk_aux_pmctl_id,
+	.pmctl_id_sz = ARRAY_SIZE(ispk_aux_pmctl_id),
+	.default_sample_rate = 48000,
+	.pamp_on = msm_snddev_tx_route_config,
+	.pamp_off = msm_snddev_tx_route_deconfig,
+};
+
+static struct platform_device msm_ispkr_aux_mic_device = {
+	.name = "snddev_icodec",
+	.id = 30,
+	.dev = { .platform_data = &snddev_ispkr_aux_mic_data },
+};
+//ZTE_AUDIO_GUSHENGGAO_20110829 added for aux MIC test end
 
 static struct adie_codec_action_unit idual_mic_endfire_8KHz_osr256_actions[] =
 	AMIC_DUAL_8000_OSR_256;
@@ -962,7 +1023,7 @@ static struct adie_codec_dev_profile ihs_stereo_speaker_stereo_rx_profile = {
 	.settings = ihs_stereo_speaker_stereo_rx_settings,
 	.setting_sz = ARRAY_SIZE(ihs_stereo_speaker_stereo_rx_settings),
 };
-//ZTE_Audio_songyy_110810, for 843, start
+
 static struct snddev_icodec_data snddev_ihs_stereo_speaker_stereo_rx_data = {
 	.capability = (SNDDEV_CAP_RX | SNDDEV_CAP_VOICE),
 	.name = "headset_stereo_speaker_stereo_rx",
@@ -975,12 +1036,12 @@ static struct snddev_icodec_data snddev_ihs_stereo_speaker_stereo_rx_data = {
 	.pamp_off = msm_snddev_poweramp_off,
 	.voltage_on = msm_snddev_hsed_voltage_on,
 	.voltage_off = msm_snddev_hsed_voltage_off,
-	.max_voice_rx_vol[VOC_NB_INDEX] = 500, //songyy
-	.min_voice_rx_vol[VOC_NB_INDEX] = -1000,
-	.max_voice_rx_vol[VOC_WB_INDEX] = 500,
-	.min_voice_rx_vol[VOC_WB_INDEX] = -1000,
+	.max_voice_rx_vol[VOC_NB_INDEX] = -500,
+	.min_voice_rx_vol[VOC_NB_INDEX] = -2000,
+	.max_voice_rx_vol[VOC_WB_INDEX] = -900,
+	.min_voice_rx_vol[VOC_WB_INDEX] = -2400,
 };
-//ZTE_Audio_songyy_110810, for 843, end
+
 static struct platform_device msm_ihs_stereo_speaker_stereo_rx_device = {
 	.name = "snddev_icodec",
 	.id = 21,
@@ -1119,6 +1180,7 @@ static struct platform_device *snd_devices_ffa[] __initdata = {
 	&msm_ispkr_stereo_device,
 	&msm_headset_mic_device,
 	&msm_ihs_ffa_mono_rx_device,
+	&msm_snddev_mi2s_fm_rx_device,
 	&msm_snddev_mi2s_fm_tx_device,
 	&msm_bt_sco_earpiece_device,
 	&msm_bt_sco_mic_device,
@@ -1138,6 +1200,7 @@ static struct platform_device *snd_devices_ffa[] __initdata = {
 	&msm_snddev_mi2s_stereo_rx_device,
 	&msm_bcm_fm_headset_device,
 	&msm_bcm_fm_speaker_device,
+	&msm_ispkr_aux_mic_device,//ZTE_AUDIO_GUSHENGGAO_20110829 added for aux MIC test
 };
 
 void __ref msm_snddev_init_timpani(void)

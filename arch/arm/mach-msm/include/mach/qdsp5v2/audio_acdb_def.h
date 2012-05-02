@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010 - 2011, Code Aurora Forum. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -57,7 +57,13 @@
 #define ACDB_ID_HANDSET_MIC_ENDFIRE			0x2E
 #define ACDB_ID_I2S_TX					0x30
 #define ACDB_ID_HDMI					0x40
+//<<<<<<< .working
+#define ACDB_ID_FM_RX					0x4F
+/*Replace the max device ID,if any new device is added Specific to RTC only*/
+#define ACDB_ID_MAX                                 ACDB_ID_FM_RX
+//=======
 #define ACDB_ID_HAC_SPKR				0x31  	//zte_audio_gushenggao_20110525 added for hac device
+//>>>>>>> .merge-right.r4145
 
 /* ID used for virtual devices */
 #define PSEUDO_ACDB_ID 					0xFFFF

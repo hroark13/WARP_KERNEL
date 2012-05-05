@@ -63,27 +63,6 @@ static struct adie_codec_dev_profile iearpiece_profile = {
 	.setting_sz = ARRAY_SIZE(iearpiece_settings),
 };
 
-//zte_audio_gushenggao_20110720 for N860 audio,start
-#if (defined(CONFIG_MACH_ARTHUR))
-static struct snddev_icodec_data snddev_iearpiece_data = {
-	.capability = (SNDDEV_CAP_RX | SNDDEV_CAP_VOICE),
-	.name = "handset_rx",
-	.copp_id = 0,
-	.acdb_id = ACDB_ID_HANDSET_SPKR,
-	.profile = &iearpiece_profile,
-	.channel_mode = 1,
-	.pmctl_id = NULL,
-	.pmctl_id_sz = 0,
-	.default_sample_rate = 48000,
-	.pamp_on = NULL,
-	.pamp_off = NULL,
-	.property = SIDE_TONE_MASK,
-	.max_voice_rx_vol[VOC_NB_INDEX] = 1000,
-	.min_voice_rx_vol[VOC_NB_INDEX] = -1500,
-	.max_voice_rx_vol[VOC_WB_INDEX] = 1000,
-	.min_voice_rx_vol[VOC_WB_INDEX] = -1500
-};
-#else
 static struct snddev_icodec_data snddev_iearpiece_data = {
 	.capability = (SNDDEV_CAP_RX | SNDDEV_CAP_VOICE),
 	.name = "handset_rx",
@@ -102,8 +81,6 @@ static struct snddev_icodec_data snddev_iearpiece_data = {
 	.max_voice_rx_vol[VOC_WB_INDEX] = -200,
 	.min_voice_rx_vol[VOC_WB_INDEX] = -1700
 };
-#endif
-//zte_audio_gushenggao_20110720 for N860 audio,end
 
 static struct platform_device msm_iearpiece_device = {
 	.name = "snddev_icodec",
@@ -111,8 +88,7 @@ static struct platform_device msm_iearpiece_device = {
 	.dev = { .platform_data = &snddev_iearpiece_data },
 };
 
-//zte_audio_gushenggao_20110525 for hac device,start
-#if defined(ZTE_FEATURE_HAC)
+
 static struct adie_codec_action_unit ihac_rx_48KHz_osr256_actions[] =
 	HAC_RX_48000_OSR_256;
 
@@ -155,8 +131,7 @@ static struct platform_device msm_ihac_rx_device = {
 	.id = 29,
 	.dev = { .platform_data = &snddev_ihac_rx_data },
 };
-#endif
-//zte_audio_gushenggao_20110525 for hac device, end 
+
 
 static struct adie_codec_action_unit imic_8KHz_osr256_actions[] =
 	HANDSET_TX_8000_OSR_256;
@@ -789,14 +764,8 @@ struct platform_device msm_bt_sco_mic_device = {
 };
 
 static struct adie_codec_action_unit idual_mic_endfire_8KHz_osr256_actions[] =
-//Dual mic, ZTE_AUDIO_HUDIE_20110413, ZTE_AUDIO_HUDIE_20110519, begin
-//#if defined(CONFIG_MACH_BLADEPLUS)
-#if defined(ZTE_FEATURE_DUAL_MIC_HANDSET)  
+
      MIC1_LEFT_AUX_IN_RIGHT_8000_OSR_256;
-#else
-     MIC1_LEFT_LINE_IN_RIGHT_8000_OSR_256;
-#endif
-//Dual mic, ZTE_AUDIO_HUDIE_20110413, ZTE_AUDIO_HUDIE_20110519, end
 
 static struct adie_codec_hwsetting_entry idual_mic_endfire_settings[] = {
 	{
@@ -927,14 +896,9 @@ static struct platform_device msm_idual_mic_broadside_device = {
 };
 
 static struct adie_codec_action_unit ispk_dual_mic_ef_8KHz_osr256_actions[] =
-//Dual mic, ZTE_AUDIO_HUDIE_20110413, ZTE_AUDIO_HUDIE_20110519, begin
-//#if defined(CONFIG_MACH_BLADEPLUS)
-#if defined(ZTE_FEATURE_DUAL_MIC_SPEAKER) 
+
         SPEAKER_MIC1_LEFT_AUX_IN_RIGHT_8000_OSR_256; 
-#else
-        SPEAKER_MIC1_LEFT_LINE_IN_RIGHT_8000_OSR_256;
-#endif
-//Dual mic, ZTE_AUDIO_HUDIE_20110413, ZTE_AUDIO_HUDIE_20110519, end
+
 
 static struct adie_codec_hwsetting_entry ispk_dual_mic_ef_settings[] = {
 	{
@@ -1628,15 +1592,10 @@ static struct platform_device *snd_devices_surf[] __initdata = {
 	&msm_bt_sco_mic_device,
 	&msm_ifmradio_handset_device,
 	&msm_ispeaker_rx_device,
-//Dual mic, ZTE_AUDIO_HUDIE_20110413, ZTE_AUDIO_HUDIE_20110519, begin
-//#if defined(CONFIG_MACH_BLADEPLUS)
-#if defined(ZTE_FEATURE_DUAL_MIC_HANDSET) 
+
 	&msm_idual_mic_endfire_device,//nmuid = 9
-#endif
-#if defined(ZTE_FEATURE_DUAL_MIC_SPEAKER)
-	&msm_spk_idual_mic_endfire_device,//nmuid = 10
-#endif 
-//Dual mic, ZTE_AUDIO_HUDIE_20110413, ZTE_AUDIO_HUDIE_20110519, end
+
+
 	&msm_ifmradio_speaker_device,
 	&msm_ifmradio_headset_device,
 	&msm_itty_hs_mono_tx_device,
@@ -1648,9 +1607,7 @@ static struct platform_device *snd_devices_surf[] __initdata = {
 	&msm_snddev_mi2s_stereo_rx_device,
 	&msm_snddev_mi2s_fm_tx_device,
 	&msm_uplink_rx_device,
-#if defined(ZTE_FEATURE_HAC)
 	&msm_ihac_rx_device, 	//zte_audio_gushenggao_20110525 added for hac device
-#endif
 	&msm_ispeaker_aux_tx_device,//ZTE_AUDIO_GUSHENGGAO_20110829 added for aux MIC test
 	&msm_fm_headset_stereo_tx_device, //zrlean
 	&msm_fm_headset_stereo_rx_device  //zrlean

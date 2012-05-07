@@ -73,7 +73,6 @@
 #include <linux/ftrace.h>
 #include <linux/slab.h>
 #include <linux/cpuacct.h>
-#include <linux/kernel.h>
 
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>
@@ -418,7 +417,6 @@ struct rt_rq {
  */
 struct root_domain {
 	atomic_t refcount;
-	struct rcu_head rcu;
 	cpumask_var_t span;
 	cpumask_var_t online;
 
@@ -494,6 +492,7 @@ struct rq {
 	struct mm_struct *prev_mm;
 
 	u64 clock;
+	u64 clock_task;
 
 	atomic_t nr_iowait;
 
@@ -519,6 +518,10 @@ struct rq {
 	u64 age_stamp;
 	u64 idle_stamp;
 	u64 avg_idle;
+#endif
+
+#ifdef CONFIG_IRQ_TIME_ACCOUNTING
+	u64 prev_irq_time;
 #endif
 
 	/* calc_load related fields */
@@ -644,10 +647,21 @@ static inline struct task_group *task_group(struct task_struct *p)
 
 #endif /* CONFIG_CGROUP_SCHED */
 
+static u64 irq_time_cpu(int cpu);
+static void sched_irq_time_avg_update(struct rq *rq, u64 irq_time);
+
 inline void update_rq_clock(struct rq *rq)
 {
+	int cpu = cpu_of(rq);
+	u64 irq_time;
+
 	if (!rq->skip_clock_update)
 		rq->clock = sched_clock_cpu(cpu_of(rq));
+	irq_time = irq_time_cpu(cpu);
+	if (rq->clock - irq_time > rq->clock_task)
+		rq->clock_task = rq->clock - irq_time;
+
+	sched_irq_time_avg_update(rq, irq_time);
 }
 
 /*
@@ -1273,6 +1287,10 @@ static void resched_task(struct task_struct *p)
 static void sched_rt_avg_update(struct rq *rq, u64 rt_delta)
 {
 }
+
+static void sched_avg_update(struct rq *rq)
+{
+}
 #endif /* CONFIG_SMP */
 
 #if BITS_PER_LONG == 32
@@ -1818,6 +1836,94 @@ static const struct sched_class rt_sched_class;
 #define for_each_class(class) \
    for (class = sched_class_highest; class; class = class->next)
 
+#ifdef CONFIG_IRQ_TIME_ACCOUNTING
+
+/*
+ * There are no locks covering percpu hardirq/softirq time.
+ * They are only modified in account_system_vtime, on corresponding CPU
+ * with interrupts disabled. So, writes are safe.
+ * They are read and saved off onto struct rq in update_rq_clock().
+ * This may result in other CPU reading this CPU's irq time and can
+ * race with irq/account_system_vtime on this CPU. We would either get old
+ * or new value (or semi updated value on 32 bit) with a side effect of
+ * accounting a slice of irq time to wrong task when irq is in progress
+ * while we read rq->clock. That is a worthy compromise in place of having
+ * locks on each irq in account_system_time.
+ */
+static DEFINE_PER_CPU(u64, cpu_hardirq_time);
+static DEFINE_PER_CPU(u64, cpu_softirq_time);
+
+static DEFINE_PER_CPU(u64, irq_start_time);
+static int sched_clock_irqtime;
+
+void enable_sched_clock_irqtime(void)
+{
+	sched_clock_irqtime = 1;
+}
+
+void disable_sched_clock_irqtime(void)
+{
+	sched_clock_irqtime = 0;
+}
+
+static u64 irq_time_cpu(int cpu)
+{
+	if (!sched_clock_irqtime)
+		return 0;
+
+	return per_cpu(cpu_softirq_time, cpu) + per_cpu(cpu_hardirq_time, cpu);
+}
+
+void account_system_vtime(struct task_struct *curr)
+{
+	unsigned long flags;
+	int cpu;
+	u64 now, delta;
+
+	if (!sched_clock_irqtime)
+		return;
+
+	local_irq_save(flags);
+
+	cpu = smp_processor_id();
+	now = sched_clock_cpu(cpu);
+	delta = now - per_cpu(irq_start_time, cpu);
+	per_cpu(irq_start_time, cpu) = now;
+	/*
+	 * We do not account for softirq time from ksoftirqd here.
+	 * We want to continue accounting softirq time to ksoftirqd thread
+	 * in that case, so as not to confuse scheduler with a special task
+	 * that do not consume any time, but still wants to run.
+	 */
+	if (hardirq_count())
+		per_cpu(cpu_hardirq_time, cpu) += delta;
+	else if (in_serving_softirq() && !(curr->flags & PF_KSOFTIRQD))
+		per_cpu(cpu_softirq_time, cpu) += delta;
+
+	local_irq_restore(flags);
+}
+EXPORT_SYMBOL_GPL(account_system_vtime);
+
+static void sched_irq_time_avg_update(struct rq *rq, u64 curr_irq_time)
+{
+	if (sched_clock_irqtime && sched_feat(NONIRQ_POWER)) {
+		u64 delta_irq = curr_irq_time - rq->prev_irq_time;
+		rq->prev_irq_time = curr_irq_time;
+		sched_rt_avg_update(rq, delta_irq);
+	}
+}
+
+#else
+
+static u64 irq_time_cpu(int cpu)
+{
+	return 0;
+}
+
+static void sched_irq_time_avg_update(struct rq *rq, u64 curr_irq_time) { }
+
+#endif
+
 #include "sched_stats.h"
 
 static void inc_nr_running(struct rq *rq)
@@ -1969,6 +2075,9 @@ task_hot(struct task_struct *p, u64 now, struct sched_domain *sd)
 	s64 delta;
 
 	if (p->sched_class != &fair_sched_class)
+		return 0;
+
+	if (unlikely(p->policy == SCHED_IDLE))
 		return 0;
 
 	/*
@@ -3155,6 +3264,8 @@ static void update_cpu_load(struct rq *this_rq)
 	}
 
 	calc_load_account_active(this_rq);
+
+	sched_avg_update(this_rq);
 }
 
 #ifdef CONFIG_SMP
@@ -3208,7 +3319,7 @@ static u64 do_task_delta_exec(struct task_struct *p, struct rq *rq)
 
 	if (task_current(rq, p)) {
 		update_rq_clock(rq);
-		ns = rq->clock - p->se.exec_start;
+		ns = rq->clock_task - p->se.exec_start;
 		if ((s64)ns < 0)
 			ns = 0;
 	}
@@ -3357,7 +3468,7 @@ void account_system_time(struct task_struct *p, int hardirq_offset,
 	tmp = cputime_to_cputime64(cputime);
 	if (hardirq_count() - hardirq_offset)
 		cpustat->irq = cputime64_add(cpustat->irq, tmp);
-	else if (softirq_count())
+	else if (in_serving_softirq())
 		cpustat->softirq = cputime64_add(cpustat->softirq, tmp);
 	else
 		cpustat->system = cputime64_add(cpustat->system, tmp);
@@ -5335,7 +5446,7 @@ void __cpuinit init_idle(struct task_struct *idle, int cpu)
 	 * The idle tasks have their own, simple scheduling class:
 	 */
 	idle->sched_class = &idle_sched_class;
-	ftrace_graph_init_task(idle);
+	ftrace_graph_init_idle_task(idle, cpu);
 }
 
 /*
@@ -6166,9 +6277,9 @@ sd_parent_degenerate(struct sched_domain *sd, struct sched_domain *parent)
 	return 1;
 }
 
-static void free_rootdomain(struct rcu_head *rcu)
+static void free_rootdomain(struct root_domain *rd)
 {
-	struct root_domain *rd = container_of(rcu, struct root_domain, rcu);
+	synchronize_sched();
 
 	cpupri_cleanup(&rd->cpupri);
 
@@ -6212,7 +6323,7 @@ static void rq_attach_root(struct rq *rq, struct root_domain *rd)
 	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
 	if (old_rd)
-		call_rcu_sched(&old_rd->rcu, free_rootdomain);
+		free_rootdomain(old_rd);
 }
 
 static int init_rootdomain(struct root_domain *rd, bool bootmem)
@@ -6746,6 +6857,8 @@ static void init_sched_groups_power(int cpu, struct sched_domain *sd)
 	if (cpu != group_first_cpu(sd->groups))
 		return;
 
+	sd->groups->group_weight = cpumask_weight(sched_group_cpus(sd->groups));
+
 	child = sd->child;
 
 	sd->groups->cpu_power = 0;
@@ -6855,7 +6968,7 @@ static void __free_domain_allocs(struct s_data *d, enum s_alloc what,
 		free_sched_groups(cpu_map, d->tmpmask); /* fall through */
 		d->sched_group_nodes = NULL;
 	case sa_rootdomain:
-		free_rootdomain(&(d->rd->rcu)); /* fall through */
+		free_rootdomain(d->rd); /* fall through */
 	case sa_tmpmask:
 		free_cpumask_var(d->tmpmask); /* fall through */
 	case sa_send_covered:
@@ -7275,31 +7388,19 @@ void fast_sched_domains_update(int cpu)
 		free_cpumask_var(d.nodemask);
 		goto skip;
 	}
-	d.rd = alloc_rootdomain();
-	if (!d.rd) {
-		free_cpumask_var(d.nodemask);
-		free_cpumask_var(d.send_covered);
-		goto skip;
-	}
 
 	cpumask_andnot(cpu_map, cpu_active_mask, cpu_isolated_map);
 
-	for_each_cpu(i, cpu_map) {
-		cpumask_and(d.nodemask,
-			cpumask_of_node(cpu_to_node(i)), cpu_map);
-		sd = __build_cpu_sched_domain(&d, cpu_map, NULL, NULL, i);
-	}
+	cpumask_and(d.nodemask, cpumask_of_node(cpu_to_node(cpu)), cpu_map);
+	sd = __build_cpu_sched_domain(&d, cpu_map, NULL, NULL, cpu);
 
-	build_sched_groups(&d, SD_LV_CPU, cpu_map, 0);
+	build_sched_groups(&d, SD_LV_CPU, cpu_map, cpu);
 	for_each_cpu(i, cpu_map) {
 		sd = &per_cpu(phys_domains, i).sd;
 		init_sched_groups_power(i, sd);
 	}
 
-	for_each_cpu(i, cpu_map) {
-		sd = &per_cpu(phys_domains, i).sd;
-		cpu_attach_domain(sd, d.rd, i);
-	}
+	cpu_attach_domain(sd, cpu_rq(0)->rd, cpu);
 
 	free_cpumask_var(d.nodemask);
 	free_cpumask_var(d.send_covered);
@@ -7342,7 +7443,6 @@ void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 {
 	int i, j, n;
 	int new_topology;
-	cpumask_var_t doms_temp;
 
 	mutex_lock(&sched_domains_mutex);
 
@@ -7352,20 +7452,14 @@ void partition_sched_domains(int ndoms_new, cpumask_var_t doms_new[],
 	/* Let architecture update cpu core mappings. */
 	new_topology = arch_update_cpu_topology();
 
-	cpumask_andnot(doms_temp, cpu_active_mask, cpu_isolated_map);
-
 	n = doms_new ? ndoms_new : 0;
 
 	/* Destroy deleted domains */
 	for (i = 0; i < ndoms_cur; i++) {
-		if (!new_topology) {
-			if ((n == 0) && cpumask_subset(doms_cur[i], doms_temp))
+		for (j = 0; j < n && !new_topology; j++) {
+			if (cpumask_equal(doms_cur[i], doms_new[j])
+			    && dattrs_equal(dattr_cur, i, dattr_new, j))
 				goto match1;
-			for (j = 0; j < n; j++) {
-				if (cpumask_equal(doms_cur[i], doms_new[j])
-				    && dattrs_equal(dattr_cur, i, dattr_new, j))
-					goto match1;
-			}
 		}
 		/* no match - a current sched domain not in new doms_new[] */
 		detach_destroy_domains(doms_cur[i]);
@@ -8324,12 +8418,12 @@ void sched_move_task(struct task_struct *tsk)
 		tsk->sched_class->prep_move_group(tsk, on_rq);
 #endif
 
-	set_task_rq(tsk, task_cpu(tsk));
-
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	if (tsk->sched_class->moved_group)
 		tsk->sched_class->moved_group(tsk, on_rq);
+	else
 #endif
+		set_task_rq(tsk, task_cpu(tsk));
 
 	if (unlikely(running))
 		tsk->sched_class->set_curr_task(rq);

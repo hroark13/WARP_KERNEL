@@ -418,9 +418,6 @@ static struct inet6_dev * ipv6_add_dev(struct net_device *dev)
 	    dev->type == ARPHRD_TUNNEL6 ||
 	    dev->type == ARPHRD_SIT ||
 	    dev->type == ARPHRD_NONE) {
-		printk(KERN_INFO
-		       "%s: Disabled Privacy Extensions\n",
-		       dev->name);
 		ndev->cnf.use_tempaddr = -1;
 	} else {
 		in6_dev_hold(ndev);
@@ -1585,16 +1582,9 @@ static int ipv6_generate_eui64(u8 *eui, struct net_device *dev)
 		return addrconf_ifid_infiniband(eui, dev);
 	case ARPHRD_SIT:
 		return addrconf_ifid_sit(eui, dev);
-	case ARPHRD_RAWIP: {
-		struct in6_addr lladdr;
-
-		if (ipv6_get_lladdr(dev, &lladdr, IFA_F_TENTATIVE))
-			get_random_bytes(eui, 8);
-		else
-			memcpy(eui, lladdr.s6_addr + 8, 8);
-
+	case ARPHRD_RAWIP:
+		get_random_bytes(eui, 8);
 		return 0;
-	}
 	}
 	return -1;
 }

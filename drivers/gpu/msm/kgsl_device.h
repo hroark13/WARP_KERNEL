@@ -26,34 +26,25 @@
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
-#ifndef _KGSL_DEVICE_H
-#define _KGSL_DEVICE_H
+#ifndef __KGSL_DEVICE_H
+#define __KGSL_DEVICE_H
 
-#include <linux/types.h>
-#include <linux/irqreturn.h>
-#include <linux/wait.h>
-#include <linux/workqueue.h>
-#include <linux/mutex.h>
-#include <linux/msm_kgsl.h>
 #include <linux/idr.h>
 #include <linux/wakelock.h>
+
 #include <linux/earlysuspend.h>
 
-#include <asm/atomic.h>
-
+#include "kgsl.h"
 #include "kgsl_mmu.h"
 #include "kgsl_pwrctrl.h"
 #include "kgsl_log.h"
+#include "kgsl_pwrscale.h"
 
 #define KGSL_TIMEOUT_NONE       0
 #define KGSL_TIMEOUT_DEFAULT    0xFFFFFFFF
 
 #define FIRST_TIMEOUT (HZ / 2)
 
-#define KGSL_CHIPID_YAMATODX_REV21  0x20100
-#define KGSL_CHIPID_YAMATODX_REV211 0x20101
-#define KGSL_CHIPID_LEIA_REV470_TEMP 0x10001
-#define KGSL_CHIPID_LEIA_REV470 0x2010000
 
 /* KGSL device state is initialized to INIT when platform_probe		*
  * sucessfully initialized the device.  Once a device has been opened	*
@@ -71,6 +62,7 @@
 #define KGSL_STATE_SUSPEND	0x00000010
 #define KGSL_STATE_HUNG		0x00000020
 #define KGSL_STATE_DUMP_AND_RECOVER	0x00000040
+#define KGSL_STATE_SLUMBER	0x00000080
 
 #define KGSL_GRAPHICS_MEMORY_LOW_WATERMARK  0x1000000
 
@@ -83,79 +75,90 @@ struct kgsl_context;
 struct kgsl_power_stats;
 
 struct kgsl_functable {
-	void (*device_regread) (struct kgsl_device *device,
-					unsigned int offsetwords,
-					unsigned int *value);
-	void (*device_regwrite) (struct kgsl_device *device,
-					unsigned int offsetwords,
-					unsigned int value);
-	void (*device_regread_isr) (struct kgsl_device *device,
-				    unsigned int offsetwords,
-				    unsigned int *value);
-	void (*device_regwrite_isr) (struct kgsl_device *device,
-				     unsigned int offsetwords,
-				     unsigned int value);
-	int (*device_setstate) (struct kgsl_device *device, uint32_t flags);
-	int (*device_idle) (struct kgsl_device *device, unsigned int timeout);
-	unsigned int (*device_isidle) (struct kgsl_device *device);
-	int (*device_suspend_context) (struct kgsl_device *device);
-	int (*device_resume_context) (struct kgsl_device *device);
-	int (*device_start) (struct kgsl_device *device, unsigned int init_ram);
-	int (*device_stop) (struct kgsl_device *device);
-	int (*device_getproperty) (struct kgsl_device *device,
-					enum kgsl_property_type type,
-					void *value,
-					unsigned int sizebytes);
-	int (*device_waittimestamp) (struct kgsl_device *device,
-					unsigned int timestamp,
-					unsigned int msecs);
-	unsigned int (*device_cmdstream_readtimestamp) (
-					struct kgsl_device *device,
-					enum kgsl_timestamp_type type);
-	int (*device_issueibcmds) (struct kgsl_device_private *dev_priv,
-				struct kgsl_context *context,
-				struct kgsl_ibdesc *ibdesc,
-				unsigned int sizedwords,
-				uint32_t *timestamp,
-				unsigned int flags);
-	int (*device_drawctxt_create) (struct kgsl_device_private *dev_priv,
-					uint32_t flags,
-					struct kgsl_context *context);
-	int (*device_drawctxt_destroy) (struct kgsl_device *device,
-					struct kgsl_context *context);
-	long (*device_ioctl) (struct kgsl_device_private *dev_priv,
-					unsigned int cmd, void *data);
-	int (*device_setup_pt)(struct kgsl_device *device,
-			       struct kgsl_pagetable *pagetable);
-
-	int (*device_cleanup_pt)(struct kgsl_device *device,
-				 struct kgsl_pagetable *pagetable);
-	void (*device_power_stats)(struct kgsl_device *device,
+	/* Mandatory functions - these functions must be implemented
+	   by the client device.  The driver will not check for a NULL
+	   pointer before calling the hook.
+	 */
+	void (*regread) (struct kgsl_device *device,
+		unsigned int offsetwords, unsigned int *value);
+	void (*regwrite) (struct kgsl_device *device,
+		unsigned int offsetwords, unsigned int value);
+	int (*idle) (struct kgsl_device *device, unsigned int timeout);
+	unsigned int (*isidle) (struct kgsl_device *device);
+	int (*suspend_context) (struct kgsl_device *device);
+	int (*start) (struct kgsl_device *device, unsigned int init_ram);
+	int (*stop) (struct kgsl_device *device);
+	int (*getproperty) (struct kgsl_device *device,
+		enum kgsl_property_type type, void *value,
+		unsigned int sizebytes);
+	int (*waittimestamp) (struct kgsl_device *device,
+		unsigned int timestamp, unsigned int msecs);
+	unsigned int (*readtimestamp) (struct kgsl_device *device,
+		enum kgsl_timestamp_type type);
+	int (*issueibcmds) (struct kgsl_device_private *dev_priv,
+		struct kgsl_context *context, struct kgsl_ibdesc *ibdesc,
+		unsigned int sizedwords, uint32_t *timestamp,
+		unsigned int flags);
+	int (*setup_pt)(struct kgsl_device *device,
+		struct kgsl_pagetable *pagetable);
+	void (*cleanup_pt)(struct kgsl_device *device,
+		struct kgsl_pagetable *pagetable);
+	void (*power_stats)(struct kgsl_device *device,
 		struct kgsl_power_stats *stats);
+	void (*irqctrl)(struct kgsl_device *device, int state);
+	unsigned int (*gpuid)(struct kgsl_device *device);
+	/* Optional functions - these functions are not mandatory.  The
+	   driver will check that the function pointer is not NULL before
+	   calling the hook */
+	void (*setstate) (struct kgsl_device *device, uint32_t flags);
+	int (*drawctxt_create) (struct kgsl_device *device,
+		struct kgsl_pagetable *pagetable, struct kgsl_context *context,
+		uint32_t flags);
+	void (*drawctxt_destroy) (struct kgsl_device *device,
+		struct kgsl_context *context);
+	long (*ioctl) (struct kgsl_device_private *dev_priv,
+		unsigned int cmd, void *data);
 };
 
 struct kgsl_memregion {
-	unsigned char  *mmio_virt_base;
-	unsigned int   mmio_phys_base;
-	uint32_t      gpu_base;
-	unsigned int   sizebytes;
+	unsigned char *mmio_virt_base;
+	unsigned int mmio_phys_base;
+	uint32_t gpu_base;
+	unsigned int sizebytes;
 };
+
+/* MH register values */
+struct kgsl_mh {
+	unsigned int     mharb;
+	unsigned int     mh_intf_cfg1;
+	unsigned int     mh_intf_cfg2;
+	uint32_t         mpu_base;
+	int              mpu_range;
+};
+
+struct kgsl_event {
+	uint32_t timestamp;
+	void (*func)(struct kgsl_device *, void *, u32);
+	void *priv;
+	struct list_head list;
+};
+
 
 struct kgsl_device {
 	struct device *dev;
 	const char *name;
 	unsigned int ver_major;
 	unsigned int ver_minor;
-	uint32_t       flags;
-	enum kgsl_deviceid    id;
-	unsigned int      chip_id;
+	uint32_t flags;
+	enum kgsl_deviceid id;
 	struct kgsl_memregion regspace;
 	struct kgsl_memdesc memstore;
 	const char *iomemname;
 
-	struct kgsl_mmu 	  mmu;
+	struct kgsl_mh mh;
+	struct kgsl_mmu mmu;
 	struct completion hwaccess_gate;
-	struct kgsl_functable ftbl;
+	const struct kgsl_functable *ftbl;
 	struct work_struct idle_check_ws;
 	struct timer_list idle_timer;
 	struct kgsl_pwrctrl pwrctrl;
@@ -163,8 +166,8 @@ struct kgsl_device {
 
 	struct atomic_notifier_head ts_notifier_list;
 	struct mutex mutex;
-	uint32_t		state;
-	uint32_t		requested_state;
+	uint32_t state;
+	uint32_t requested_state;
 
 	struct list_head memqueue;
 	unsigned int active_cnt;
@@ -172,7 +175,7 @@ struct kgsl_device {
 
 	wait_queue_head_t wait_queue;
 	struct workqueue_struct *work_queue;
-	struct platform_device *pdev;
+	struct device *parentdev;
 	struct completion recovery_gate;
 	struct dentry *d_debugfs;
 	struct idr context_idr;
@@ -185,6 +188,10 @@ struct kgsl_device {
 	int mem_log;
 	int pwr_log;
 	struct wake_lock idle_wakelock;
+	struct kgsl_pwrscale pwrscale;
+	struct kobject pwrscale_kobj;
+	struct work_struct ts_expired_ws;
+	struct list_head events;
 };
 
 struct kgsl_context {
@@ -204,32 +211,17 @@ struct kgsl_process_private {
 	struct list_head mem_list;
 	struct kgsl_pagetable *pagetable;
 	struct list_head list;
-	struct kobject *kobj;
+	struct kobject kobj;
 
 	struct {
-		unsigned int vmalloc;
-		unsigned int vmalloc_max;
-		unsigned int exmem;
-		unsigned int exmem_max;
-		unsigned int flushes;
-	} stats;
+		unsigned int cur;
+		unsigned int max;
+	} stats[KGSL_MEM_ENTRY_MAX];
 };
 
 struct kgsl_device_private {
 	struct kgsl_device *device;
 	struct kgsl_process_private *process_priv;
-};
-
-struct kgsl_devconfig {
-	struct kgsl_memregion regspace;
-
-	unsigned int     mmu_config;
-	uint32_t        mpu_base;
-	int              mpu_range;
-	uint32_t        va_base;
-	unsigned int     va_range;
-
-	struct kgsl_memregion gmemspace;
 };
 
 struct kgsl_power_stats {
@@ -239,10 +231,71 @@ struct kgsl_power_stats {
 
 struct kgsl_device *kgsl_get_device(int dev_idx);
 
+static inline void kgsl_process_add_stats(struct kgsl_process_private *priv,
+	unsigned int type, size_t size)
+{
+	priv->stats[type].cur += size;
+	if (priv->stats[type].max < priv->stats[type].cur)
+		priv->stats[type].max = priv->stats[type].cur;
+}
+
+static inline void kgsl_regread(struct kgsl_device *device,
+				unsigned int offsetwords,
+				unsigned int *value)
+{
+	device->ftbl->regread(device, offsetwords, value);
+}
+
+static inline void kgsl_regwrite(struct kgsl_device *device,
+				 unsigned int offsetwords,
+				 unsigned int value)
+{
+	device->ftbl->regwrite(device, offsetwords, value);
+}
+
+static inline int kgsl_idle(struct kgsl_device *device, unsigned int timeout)
+{
+	return device->ftbl->idle(device, timeout);
+}
+
+static inline unsigned int kgsl_gpuid(struct kgsl_device *device)
+{
+	return device->ftbl->gpuid(device);
+}
+
+static inline int kgsl_create_device_sysfs_files(struct device *root,
+	const struct device_attribute **list)
+{
+	int ret = 0, i;
+	for (i = 0; list[i] != NULL; i++)
+		ret |= device_create_file(root, list[i]);
+	return ret;
+}
+
+static inline void kgsl_remove_device_sysfs_files(struct device *root,
+	const struct device_attribute **list)
+{
+	int i;
+	for (i = 0; list[i] != NULL; i++)
+		device_remove_file(root, list[i]);
+}
+
 static inline struct kgsl_mmu *
 kgsl_get_mmu(struct kgsl_device *device)
 {
 	return (struct kgsl_mmu *) (device ? &device->mmu : NULL);
+}
+
+static inline struct kgsl_device *kgsl_device_from_dev(struct device *dev)
+{
+	int i;
+
+	for (i = 0; i < KGSL_DEVICE_MAX; i++) {
+		if (kgsl_driver.devp[i] && kgsl_driver.devp[i]->dev == dev)
+			return kgsl_driver.devp[i];
+	}
+
+	return NULL;
 }
 
 static inline int kgsl_create_device_workqueue(struct kgsl_device *device)
@@ -268,4 +321,16 @@ kgsl_find_context(struct kgsl_device_private *dev_priv, uint32_t id)
 	return  (ctxt && ctxt->dev_priv == dev_priv) ? ctxt : NULL;
 }
 
-#endif  /* _KGSL_DEVICE_H */
+int kgsl_check_timestamp(struct kgsl_device *device, unsigned int timestamp);
+
+int kgsl_register_ts_notifier(struct kgsl_device *device,
+			      struct notifier_block *nb);
+
+int kgsl_unregister_ts_notifier(struct kgsl_device *device,
+				struct notifier_block *nb);
+
+int kgsl_device_platform_probe(struct kgsl_device *device,
+		irqreturn_t (*dev_isr) (int, void*));
+void kgsl_device_platform_remove(struct kgsl_device *device);
+
+#endif  /* __KGSL_DEVICE_H */

@@ -102,13 +102,13 @@
 extern struct atmel_i2c_platform_data atmel_data;
 #endif
 
-#define MSM_PMEM_SF_SIZE	0x1800000 //0x1700000
+#define MSM_PMEM_SF_SIZE	0x1700000
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MSM_FB_SIZE            0x780000
 #else
 #define MSM_FB_SIZE            0x500000
 #endif
-#define MSM_GPU_PHYS_SIZE       SZ_1M
+#define MSM_GPU_PHYS_SIZE       SZ_2M
 #define MSM_PMEM_ADSP_SIZE      0x0 //0x1E00000
 #define MSM_FLUID_PMEM_ADSP_SIZE	0x0 //0x2800000
 #define PMEM_KERNEL_EBI1_SIZE   0x600000
@@ -4256,7 +4256,6 @@ static struct platform_device android_pmem_adsp_device = {
 };
 
 
-
 static struct resource kgsl_3d0_resources[] = {
 	{
 		.name  = KGSL_3D0_REG_MEMORY,
@@ -7399,8 +7398,6 @@ static void __init fluid_pmem_adsp_size_setup(char **p)
 	fluid_pmem_adsp_size = memparse(*p, p);
 }
 __early_param("fluid_pmem_adsp_size=", fluid_pmem_adsp_size_setup);
-
-
 
 static unsigned pmem_kernel_ebi1_size = PMEM_KERNEL_EBI1_SIZE;
 static void __init pmem_kernel_ebi1_size_setup(char **p)

@@ -376,6 +376,7 @@ static inline char *pack_hex_byte(char *buf, u8 byte)
 }
 
 extern int hex_to_bin(char ch);
+extern void hex2bin(u8 *dst, const char *src, size_t count);
 
 #ifndef pr_fmt
 #define pr_fmt(fmt) fmt
@@ -783,5 +784,14 @@ struct sysinfo {
 #ifdef CONFIG_FTRACE_MCOUNT_RECORD
 # define REBUILD_DUE_TO_FTRACE_MCOUNT_RECORD
 #endif
+
+/*
+ * This value is used control if console_start is permitted
+ */
+#ifdef CONFIG_CONSOLE_CONTROL
+extern unsigned long console_value;
+#endif
+
+
 
 #endif

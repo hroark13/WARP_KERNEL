@@ -1,5 +1,4 @@
 /* Copyright (c) 2011, Code Aurora Forum. All rights reserved.
- * Copyright (C) 2011 Sony Ericsson Mobile Communications AB.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -33,16 +32,12 @@
 #define _RDLOCK  GENLOCK_RDLOCK
 #define _WRLOCK GENLOCK_WRLOCK
 
-#define GENLOCK_LOG_ERR(fmt, args...) \
-pr_err("genlock: %s: " fmt, __func__, ##args)
-
 struct genlock {
 	struct list_head active;  /* List of handles holding lock */
 	spinlock_t lock;          /* Spinlock to protect the lock internals */
 	wait_queue_head_t queue;  /* Holding pen for processes pending lock */
 	struct file *file;        /* File structure for exported lock */
 	int state;                /* Current state of the lock */
-	struct kref refcount;
 };
 
 struct genlock_handle {
@@ -54,46 +49,13 @@ struct genlock_handle {
 };
 
 /*
- * Create a spinlock to protect against a race condition when a lock gets
- * released while another process tries to attach it
- */
-
-static DEFINE_SPINLOCK(genlock_file_lock);
-
-static void genlock_destroy(struct kref *kref)
-{
-	struct genlock *lock = container_of(kref, struct genlock,
-			refcount);
-
-	/*
-	 * Clear the private data for the file descriptor in case the fd is
-	 * still active after the lock gets released
-	 */
-
-	spin_lock(&genlock_file_lock);
-	if (lock->file)
-		lock->file->private_data = NULL;
-	spin_unlock(&genlock_file_lock);
-
-	kfree(lock);
-}
-
-/*
  * Release the genlock object. Called when all the references to
  * the genlock file descriptor are released
  */
 
 static int genlock_release(struct inode *inodep, struct file *file)
 {
-	struct genlock *lock = file->private_data;
-	/*
-	 * Clear the refrence back to this file structure to avoid
-	 * somehow reusing the lock after the file has been destroyed
-	 */
-
-	if (lock)
-		lock->file = NULL;
-
+	kfree(file->private_data);
 	return 0;
 }
 
@@ -112,16 +74,12 @@ struct genlock *genlock_create_lock(struct genlock_handle *handle)
 {
 	struct genlock *lock;
 
-	if (handle->lock != NULL) {
-		GENLOCK_LOG_ERR("Handle already has a lock attached\n");
+	if (handle->lock != NULL)
 		return ERR_PTR(-EINVAL);
-	}
 
 	lock = kzalloc(sizeof(*lock), GFP_KERNEL);
-	if (lock == NULL) {
-		GENLOCK_LOG_ERR("Unable to allocate memory for a lock\n");
+	if (lock == NULL)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	INIT_LIST_HEAD(&lock->active);
 	init_waitqueue_head(&lock->queue);
@@ -139,7 +97,6 @@ struct genlock *genlock_create_lock(struct genlock_handle *handle)
 
 	/* Attach the new lock to the handle */
 	handle->lock = lock;
-	kref_init(&lock->refcount);
 
 	return lock;
 }
@@ -154,10 +111,8 @@ static int genlock_get_fd(struct genlock *lock)
 {
 	int ret;
 
-	if (!lock->file) {
-		GENLOCK_LOG_ERR("No file attached to the lock\n");
+	if (!lock->file)
 		return -EINVAL;
-	}
 
 	ret = get_unused_fd_flags(0);
 	if (ret < 0)
@@ -177,39 +132,17 @@ static int genlock_get_fd(struct genlock *lock)
 struct genlock *genlock_attach_lock(struct genlock_handle *handle, int fd)
 {
 	struct file *file;
-	struct genlock *lock;
 
-	if (handle->lock != NULL) {
-		GENLOCK_LOG_ERR("Handle already has a lock attached\n");
+	if (handle->lock != NULL)
 		return ERR_PTR(-EINVAL);
-	}
 
 	file = fget(fd);
-	if (file == NULL) {
-		GENLOCK_LOG_ERR("Bad file descriptor\n");
+	if (file == NULL)
 		return ERR_PTR(-EBADF);
-	}
 
-	/*
-	 * take a spinlock to avoid a race condition if the lock is
-	 * released and then attached
-	 */
+	handle->lock = file->private_data;
 
-	spin_lock(&genlock_file_lock);
-	lock = file->private_data;
-	spin_unlock(&genlock_file_lock);
-
-	fput(file);
-
-	if (lock == NULL) {
-		GENLOCK_LOG_ERR("File descriptor is invalid\n");
-		return ERR_PTR(-EINVAL);
-	}
-
-	handle->lock = lock;
-	kref_get(&lock->refcount);
-
-	return lock;
+	return handle->lock;
 }
 EXPORT_SYMBOL(genlock_attach_lock);
 
@@ -248,16 +181,13 @@ static int _genlock_unlock(struct genlock *lock, struct genlock_handle *handle)
 
 	spin_lock_irqsave(&lock->lock, irqflags);
 
-	if (lock->state == _UNLOCKED) {
-		GENLOCK_LOG_ERR("Trying to unlock an unlocked handle\n");
+	if (lock->state == _UNLOCKED)
 		goto done;
-	}
 
 	/* Make sure this handle is an owner of the lock */
-	if (!handle_has_lock(lock, handle)) {
-		GENLOCK_LOG_ERR("handle does not have lock attached to it\n");
+	if (!handle_has_lock(lock, handle))
 		goto done;
-	}
+
 	/* If the handle holds no more references to the lock then
 	   release it (maybe) */
 
@@ -326,8 +256,7 @@ static int _genlock_lock(struct genlock *lock, struct genlock_handle *handle,
 		 * Otherwise the user tried to turn a read into a write, and we
 		 * don't allow that.
 		 */
-		GENLOCK_LOG_ERR("Trying to upgrade a read lock to a write"
-				"lock\n");
+
 		ret = -EINVAL;
 		goto done;
 	}
@@ -397,10 +326,8 @@ int genlock_lock(struct genlock_handle *handle, int op, int flags,
 	struct genlock *lock = handle->lock;
 	int ret = 0;
 
-	if (lock == NULL) {
-		GENLOCK_LOG_ERR("Handle does not have a lock attached\n");
+	if (lock == NULL)
 		return -EINVAL;
-	}
 
 	switch (op) {
 	case GENLOCK_UNLOCK:
@@ -411,7 +338,6 @@ int genlock_lock(struct genlock_handle *handle, int op, int flags,
 		ret = _genlock_lock(lock, handle, op, flags, timeout);
 		break;
 	default:
-		GENLOCK_LOG_ERR("Invalid lock operation\n");
 		ret = -EINVAL;
 		break;
 	}
@@ -433,10 +359,8 @@ int genlock_wait(struct genlock_handle *handle, uint32_t timeout)
 	int ret = 0;
 	unsigned int ticks = msecs_to_jiffies(timeout);
 
-	if (lock == NULL) {
-		GENLOCK_LOG_ERR("Handle does not have a lock attached\n");
+	if (lock == NULL)
 		return -EINVAL;
-	}
 
 	spin_lock_irqsave(&lock->lock, irqflags);
 
@@ -495,7 +419,7 @@ void genlock_release_lock(struct genlock_handle *handle)
 	}
 	spin_unlock_irqrestore(&handle->lock->lock, flags);
 
-	kref_put(&handle->lock->refcount, genlock_destroy);
+	fput(handle->lock->file);
 	handle->lock = NULL;
 	handle->active = 0;
 }
@@ -526,10 +450,8 @@ static const struct file_operations genlock_handle_fops = {
 static struct genlock_handle *_genlock_get_handle(void)
 {
 	struct genlock_handle *handle = kzalloc(sizeof(*handle), GFP_KERNEL);
-	if (handle == NULL) {
-		GENLOCK_LOG_ERR("Unable to allocate memory for the handle\n");
+	if (handle == NULL)
 		return ERR_PTR(-ENOMEM);
-	}
 
 	return handle;
 }
@@ -600,11 +522,8 @@ static long genlock_dev_ioctl(struct file *filep, unsigned int cmd,
 		return 0;
 	}
 	case GENLOCK_IOC_EXPORT: {
-		if (handle->lock == NULL) {
-			GENLOCK_LOG_ERR("Handle does not have a lock"
-					"attached\n");
+		if (handle->lock == NULL)
 			return -EINVAL;
-		}
 
 		ret = genlock_get_fd(handle->lock);
 		if (ret < 0)
@@ -649,7 +568,6 @@ static long genlock_dev_ioctl(struct file *filep, unsigned int cmd,
 		return 0;
 	}
 	default:
-		GENLOCK_LOG_ERR("Invalid ioctl\n");
 		return -EINVAL;
 	}
 }
@@ -658,8 +576,7 @@ static int genlock_dev_release(struct inode *inodep, struct file *file)
 {
 	struct genlock_handle *handle = file->private_data;
 
-	genlock_release_lock(handle);
-	kfree(handle);
+	genlock_put_handle(handle);
 
 	return 0;
 }

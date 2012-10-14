@@ -1,0 +1,32 @@
+config WIFI_BCM4329_ZTE
+	bool "Broadcom 4329 zte wireless"
+	default n
+	
+config BCM4329_ZTE
+	tristate "Broadcom 4329 zte wireless cards support"
+	depends on MMC && WIFI_BCM4329_ZTE
+	default m
+	select WIRELESS_EXT
+	select WEXT_PRIV
+	---help---
+	  This module adds support for wireless adapters based on
+	  Broadcom 4329 chipset.
+
+	  This driver uses the kernel's wireless extensions subsystem.
+
+	  If you choose to build a module, it'll be called dhd. Say M if
+	  unsure.
+
+config BCM4329_FW_PATH
+	depends on BCM4329_ZTE
+	string "Firmware path"
+	default "/system/etc/firmware/fw_bcm4329.bin"
+	---help---
+	  Path to the firmware file.
+
+config BCM4329_NVRAM_PATH
+	depends on BCM4329_ZTE
+	string "NVRAM path"
+	default "/proc/calibration"
+	---help---
+	  Path to the calibration file.

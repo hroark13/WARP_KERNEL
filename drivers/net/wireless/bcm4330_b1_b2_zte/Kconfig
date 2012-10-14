@@ -1,0 +1,20 @@
+config WIFI_BCM4330_ZTE
+	bool "Broadcom bcm4330 b1&b2 zte wireless"
+	default n
+	
+config BCM4330_ZTE
+	default n
+	tristate "Broadcom bcm4330 b1&b2 zte wireless cards support"
+	depends on MMC && WIFI_BCM4330_ZTE
+	select WIRELESS_EXT
+	select WEXT_PRIV
+	---help---
+	  This module adds support for wireless adapters based on
+	  Broadcom chipset.
+
+	  This driver uses the kernel's wireless extensions subsystem.
+
+	  If you choose to build a module, it'll be called dhd. Say M if
+	  unsure.
+	  
+	  

@@ -1,11 +1,12 @@
 config MSM_KGSL
 	tristate "MSM 3D Graphics driver"
 	default n
-        depends on FB && ARM && ARCH_MSM
+	depends on ARCH_MSM && !ARCH_MSM7X00A && !ARCH_MSM7X25
 	select GENERIC_ALLOCATOR
 	select FW_LOADER
 	---help---
 	  3D graphics driver. Required to use hardware accelerated
+	  OpenGL ES 2.0 and 1.1.
 
 config MSM_KGSL_CFF_DUMP
 	bool "Enable KGSL Common File Format (CFF) Dump Feature [Use with caution]"
@@ -57,7 +58,7 @@ config MSM_KGSL_PSTMRTMDMP_RB_HEX
 config MSM_KGSL_2D
 	tristate "MSM 2D graphics driver. Required for OpenVG"
 	default y
-	depends on MSM_KGSL
+	depends on MSM_KGSL && !ARCH_MSM7X27 && !ARCH_MSM7X27A && !(ARCH_QSD8X50 && !MSM_SOC_REV_A)
 
 config MSM_KGSL_DRM
 	bool "Build a DRM interface for the MSM_KGSL driver"

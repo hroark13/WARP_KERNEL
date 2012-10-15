@@ -4256,7 +4256,7 @@ static struct platform_device android_pmem_adsp_device = {
 };
 
 
-static struct resource kgsl_3d0_resources[] = {
+struct resource kgsl_3d0_resources[] = {
 	{
 		.name  = KGSL_3D0_REG_MEMORY,
 		.start = 0xA3500000, /* 3D GRP address */
@@ -4280,14 +4280,19 @@ static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 			},
 			{
 				.gpu_freq = 192000000,
+				.bus_freq = 152000000,
+			},
+			{
+				.gpu_freq = 192000000,
 				.bus_freq = 0,
 			},
 		},
 		.init_level = 0,
-		.num_levels = 2,
+		.num_levels = 3,
 		.set_grp_async = set_grp3d_async,
 		.idle_timeout = HZ/20,
 		.nap_allowed = true,
+		.idle_needed = true,
 	},
 	.clk = {
 		.name = {
@@ -4301,7 +4306,7 @@ static struct kgsl_device_platform_data kgsl_3d0_pdata = {
 	},
 };
 
-static struct platform_device msm_kgsl_3d0 = {
+struct platform_device msm_kgsl_3d0 = {
 	.name = "kgsl-3d0",
 	.id = 0,
 	.num_resources = ARRAY_SIZE(kgsl_3d0_resources),
@@ -4311,7 +4316,6 @@ static struct platform_device msm_kgsl_3d0 = {
 	},
 };
 
-#ifdef CONFIG_MSM_KGSL_2D
 static struct resource kgsl_2d0_resources[] = {
 	{
 		.name = KGSL_2D0_REG_MEMORY,
@@ -4341,6 +4345,7 @@ static struct kgsl_device_platform_data kgsl_2d0_pdata = {
 		.set_grp_async = NULL,
 		.idle_timeout = HZ/10,
 		.nap_allowed = true,
+		.idle_needed = true,
 	},
 	.clk = {
 		.name = {
@@ -4350,7 +4355,7 @@ static struct kgsl_device_platform_data kgsl_2d0_pdata = {
 	},
 };
 
-static struct platform_device msm_kgsl_2d0 = {
+struct platform_device msm_kgsl_2d0 = {
 	.name = "kgsl-2d0",
 	.id = 0,
 	.num_resources = ARRAY_SIZE(kgsl_2d0_resources),
@@ -4359,7 +4364,6 @@ static struct platform_device msm_kgsl_2d0 = {
 		.platform_data = &kgsl_2d0_pdata,
 	},
 };
-#endif
 
 
 static int mddi_toshiba_pmic_bl(int level)
@@ -5410,9 +5414,8 @@ static struct platform_device *devices[] __initdata = {
 	&msm_device_pmic_leds,
 	&android_leds,
 	&msm_kgsl_3d0,
-#ifdef CONFIG_MSM_KGSL_2D
 	&msm_kgsl_2d0,
-#endif
+
 #if 1
 
 #ifdef CONFIG_MT9T013

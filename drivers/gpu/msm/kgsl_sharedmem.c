@@ -1,4 +1,4 @@
-/* Copyright (c) 2002,2007-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2002,2007-2012, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,6 +13,8 @@
 #include <linux/vmalloc.h>
 #include <linux/memory_alloc.h>
 #include <asm/cacheflush.h>
+#include <linux/slab.h>
+#include <linux/kmemleak.h>
 
 #include "kgsl.h"
 #include "kgsl_sharedmem.h"
@@ -149,6 +151,9 @@ static struct mem_entry_stats mem_stats[] = {
 	MEM_ENTRY_STAT(KGSL_MEM_ENTRY_ASHMEM, ashmem),
 #endif
 	MEM_ENTRY_STAT(KGSL_MEM_ENTRY_USER, user),
+#ifdef CONFIG_ION
+	MEM_ENTRY_STAT(KGSL_MEM_ENTRY_USER, ion),
+#endif
 };
 
 void
@@ -198,6 +203,10 @@ static int kgsl_drv_memstat_show(struct device *dev,
 		val = kgsl_driver.stats.vmalloc;
 	else if (!strncmp(attr->attr.name, "vmalloc_max", 11))
 		val = kgsl_driver.stats.vmalloc_max;
+	else if (!strncmp(attr->attr.name, "page_alloc", 10))
+		val = kgsl_driver.stats.page_alloc;
+	else if (!strncmp(attr->attr.name, "page_alloc_max", 14))
+		val = kgsl_driver.stats.page_alloc_max;
 	else if (!strncmp(attr->attr.name, "coherent", 8))
 		val = kgsl_driver.stats.coherent;
 	else if (!strncmp(attr->attr.name, "coherent_max", 12))
@@ -227,6 +236,8 @@ static int kgsl_drv_histogram_show(struct device *dev,
 
 DEVICE_ATTR(vmalloc, 0444, kgsl_drv_memstat_show, NULL);
 DEVICE_ATTR(vmalloc_max, 0444, kgsl_drv_memstat_show, NULL);
+DEVICE_ATTR(page_alloc, 0444, kgsl_drv_memstat_show, NULL);
+DEVICE_ATTR(page_alloc_max, 0444, kgsl_drv_memstat_show, NULL);
 DEVICE_ATTR(coherent, 0444, kgsl_drv_memstat_show, NULL);
 DEVICE_ATTR(coherent_max, 0444, kgsl_drv_memstat_show, NULL);
 DEVICE_ATTR(mapped, 0444, kgsl_drv_memstat_show, NULL);
@@ -236,6 +247,8 @@ DEVICE_ATTR(histogram, 0444, kgsl_drv_histogram_show, NULL);
 static const struct device_attribute *drv_attr_list[] = {
 	&dev_attr_vmalloc,
 	&dev_attr_vmalloc_max,
+	&dev_attr_page_alloc,
+	&dev_attr_page_alloc_max,
 	&dev_attr_coherent,
 	&dev_attr_coherent_max,
 	&dev_attr_mapped,
@@ -272,42 +285,36 @@ static void _outer_cache_range_op(int op, unsigned long addr, size_t size)
 		break;
 	}
 }
-#endif
 
-static unsigned long kgsl_vmalloc_physaddr(struct kgsl_memdesc *memdesc,
-					   unsigned int offset)
+static void outer_cache_range_op_sg(struct scatterlist *sg, int sglen, int op)
 {
-	unsigned int addr;
+	struct scatterlist *s;
+	int i;
 
-	if (offset > memdesc->size)
-		return 0;
-
-	addr = vmalloc_to_pfn(memdesc->hostptr + offset);
-	return addr << PAGE_SHIFT;
-}
-
-#ifdef CONFIG_OUTER_CACHE
-static void kgsl_vmalloc_outer_cache(struct kgsl_memdesc *memdesc, int op)
-{
-	void *vaddr = memdesc->hostptr;
-	for (; vaddr < (memdesc->hostptr + memdesc->size); vaddr += PAGE_SIZE) {
-		unsigned long paddr = page_to_phys(vmalloc_to_page(vaddr));
-		_outer_cache_range_op(op, paddr, PAGE_SIZE);
+	for_each_sg(sg, s, sglen, i) {
+		unsigned int paddr = kgsl_get_sg_pa(s);
+		_outer_cache_range_op(op, paddr, s->length);
 	}
 }
+
+#else
+static void outer_cache_range_op_sg(struct scatterlist *sg, int sglen, int op)
+{
+}
 #endif
 
-static int kgsl_vmalloc_vmfault(struct kgsl_memdesc *memdesc,
+static int kgsl_page_alloc_vmfault(struct kgsl_memdesc *memdesc,
 				struct vm_area_struct *vma,
 				struct vm_fault *vmf)
 {
-	unsigned long offset, pg;
+	unsigned long offset;
 	struct page *page;
+	int i;
 
 	offset = (unsigned long) vmf->virtual_address - vma->vm_start;
-	pg = (unsigned long) memdesc->hostptr + offset;
 
-	page = vmalloc_to_page((void *) pg);
+	i = offset >> PAGE_SHIFT;
+	page = sg_page(&memdesc->sg[i]);
 	if (page == NULL)
 		return VM_FAULT_SIGBUS;
 
@@ -317,20 +324,64 @@ static int kgsl_vmalloc_vmfault(struct kgsl_memdesc *memdesc,
 	return 0;
 }
 
-static int kgsl_vmalloc_vmflags(struct kgsl_memdesc *memdesc)
+static int kgsl_page_alloc_vmflags(struct kgsl_memdesc *memdesc)
 {
 	return VM_RESERVED | VM_DONTEXPAND;
 }
 
-static void kgsl_vmalloc_free(struct kgsl_memdesc *memdesc)
+static void kgsl_page_alloc_free(struct kgsl_memdesc *memdesc)
 {
-	kgsl_driver.stats.vmalloc -= memdesc->size;
-	vfree(memdesc->hostptr);
+	int i = 0;
+	struct scatterlist *sg;
+	kgsl_driver.stats.page_alloc -= memdesc->size;
+	if (memdesc->hostptr) {
+		vunmap(memdesc->hostptr);
+		kgsl_driver.stats.vmalloc -= memdesc->size;
+	}
+	if (memdesc->sg)
+		for_each_sg(memdesc->sg, sg, memdesc->sglen, i)
+			__free_page(sg_page(sg));
 }
 
 static int kgsl_contiguous_vmflags(struct kgsl_memdesc *memdesc)
 {
 	return VM_RESERVED | VM_IO | VM_PFNMAP | VM_DONTEXPAND;
+}
+
+/*
+ * kgsl_page_alloc_map_kernel - Map the memory in memdesc to kernel address
+ * space
+ *
+ * @memdesc - The memory descriptor which contains information about the memory
+ *
+ * Return: 0 on success else error code
+ */
+static int kgsl_page_alloc_map_kernel(struct kgsl_memdesc *memdesc)
+{
+	if (!memdesc->hostptr) {
+		pgprot_t page_prot = pgprot_writecombine(PAGE_KERNEL);
+		struct page **pages = NULL;
+		struct scatterlist *sg;
+		int i;
+		/* create a list of pages to call vmap */
+		pages = vmalloc(memdesc->sglen * sizeof(struct page *));
+		if (!pages) {
+			KGSL_CORE_ERR("vmalloc(%d) failed\n",
+				memdesc->sglen * sizeof(struct page *));
+			return -ENOMEM;
+		}
+		for_each_sg(memdesc->sg, sg, memdesc->sglen, i)
+			pages[i] = sg_page(sg);
+		memdesc->hostptr = vmap(pages, memdesc->sglen,
+					VM_IOREMAP, page_prot);
+		KGSL_STATS_ADD(memdesc->size, kgsl_driver.stats.vmalloc,
+				kgsl_driver.stats.vmalloc_max);
+		vfree(pages);
+	}
+	if (!memdesc->hostptr)
+		return -ENOMEM;
+
+	return 0;
 }
 
 static int kgsl_contiguous_vmfault(struct kgsl_memdesc *memdesc,
@@ -371,87 +422,24 @@ static void kgsl_coherent_free(struct kgsl_memdesc *memdesc)
 			  memdesc->hostptr, memdesc->physaddr);
 }
 
-static unsigned long kgsl_contiguous_physaddr(struct kgsl_memdesc *memdesc,
-					unsigned int offset)
-{
-	if (offset > memdesc->size)
-		return 0;
-
-	return memdesc->physaddr + offset;
-}
-
-#ifdef CONFIG_OUTER_CACHE
-static void kgsl_contiguous_outer_cache(struct kgsl_memdesc *memdesc, int op)
-{
-	_outer_cache_range_op(op, memdesc->physaddr, memdesc->size);
-}
-#endif
-
-#ifdef CONFIG_OUTER_CACHE
-static void kgsl_userptr_outer_cache(struct kgsl_memdesc *memdesc, int op)
-{
-	void *vaddr = memdesc->hostptr;
-	for (; vaddr < (memdesc->hostptr + memdesc->size); vaddr += PAGE_SIZE) {
-		unsigned long paddr = kgsl_virtaddr_to_physaddr(vaddr);
-		if (paddr)
-			_outer_cache_range_op(op, paddr, PAGE_SIZE);
-	}
-}
-#endif
-
-static unsigned long kgsl_userptr_physaddr(struct kgsl_memdesc *memdesc,
-					   unsigned int offset)
-{
-	return kgsl_virtaddr_to_physaddr(memdesc->hostptr + offset);
-}
-
 /* Global - also used by kgsl_drm.c */
-struct kgsl_memdesc_ops kgsl_vmalloc_ops = {
-	.physaddr = kgsl_vmalloc_physaddr,
-	.free = kgsl_vmalloc_free,
-	.vmflags = kgsl_vmalloc_vmflags,
-	.vmfault = kgsl_vmalloc_vmfault,
-#ifdef CONFIG_OUTER_CACHE
-	.outer_cache = kgsl_vmalloc_outer_cache,
-#endif
+struct kgsl_memdesc_ops kgsl_page_alloc_ops = {
+	.free = kgsl_page_alloc_free,
+	.vmflags = kgsl_page_alloc_vmflags,
+	.vmfault = kgsl_page_alloc_vmfault,
+	.map_kernel_mem = kgsl_page_alloc_map_kernel,
 };
-EXPORT_SYMBOL(kgsl_vmalloc_ops);
+EXPORT_SYMBOL(kgsl_page_alloc_ops);
 
 static struct kgsl_memdesc_ops kgsl_ebimem_ops = {
-	.physaddr = kgsl_contiguous_physaddr,
 	.free = kgsl_ebimem_free,
 	.vmflags = kgsl_contiguous_vmflags,
 	.vmfault = kgsl_contiguous_vmfault,
-#ifdef CONFIG_OUTER_CACHE
-	.outer_cache = kgsl_contiguous_outer_cache,
-#endif
 };
 
 static struct kgsl_memdesc_ops kgsl_coherent_ops = {
-	.physaddr = kgsl_contiguous_physaddr,
 	.free = kgsl_coherent_free,
-#ifdef CONFIG_OUTER_CACHE
-	.outer_cache = kgsl_contiguous_outer_cache,
-#endif
 };
-
-/* Global - also used by kgsl.c and kgsl_drm.c */
-struct kgsl_memdesc_ops kgsl_contiguous_ops = {
-	.physaddr = kgsl_contiguous_physaddr,
-#ifdef CONFIG_OUTER_CACHE
-	.outer_cache = kgsl_contiguous_outer_cache
-#endif
-};
-EXPORT_SYMBOL(kgsl_contiguous_ops);
-
-/* Global - also used by kgsl.c */
-struct kgsl_memdesc_ops kgsl_userptr_ops = {
-	.physaddr = kgsl_userptr_physaddr,
-#ifdef CONFIG_OUTER_CACHE
-	.outer_cache = kgsl_userptr_outer_cache,
-#endif
-};
-EXPORT_SYMBOL(kgsl_userptr_ops);
 
 void kgsl_cache_range_op(struct kgsl_memdesc *memdesc, int op)
 {
@@ -470,113 +458,141 @@ void kgsl_cache_range_op(struct kgsl_memdesc *memdesc, int op)
 		break;
 	}
 
-	if (memdesc->ops->outer_cache)
-		memdesc->ops->outer_cache(memdesc, op);
+	outer_cache_range_op_sg(memdesc->sg, memdesc->sglen, op);
 }
 EXPORT_SYMBOL(kgsl_cache_range_op);
 
 static int
-_kgsl_sharedmem_vmalloc(struct kgsl_memdesc *memdesc,
+_kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 			struct kgsl_pagetable *pagetable,
-			void *ptr, size_t size, unsigned int protflags)
+			size_t size, unsigned int protflags)
 {
-	int result;
+	int order, ret = 0;
+	int sglen = PAGE_ALIGN(size) / PAGE_SIZE;
+	int i;
 
 	memdesc->size = size;
 	memdesc->pagetable = pagetable;
 	memdesc->priv = KGSL_MEMFLAGS_CACHED;
-	memdesc->ops = &kgsl_vmalloc_ops;
-	memdesc->hostptr = (void *) ptr;
+	memdesc->ops = &kgsl_page_alloc_ops;
 
-	kgsl_cache_range_op(memdesc, KGSL_CACHE_OP_INV);
+	memdesc->sg = kgsl_sg_alloc(sglen);
 
-	result = kgsl_mmu_map(pagetable, memdesc, protflags);
-
-	if (result) {
-		kgsl_sharedmem_free(memdesc);
-	} else {
-		int order;
-
-		KGSL_STATS_ADD(size, kgsl_driver.stats.vmalloc,
-			kgsl_driver.stats.vmalloc_max);
-
-		order = get_order(size);
-
-		if (order < 16)
-			kgsl_driver.stats.histogram[order]++;
+	if (memdesc->sg == NULL) {
+		KGSL_CORE_ERR("vmalloc(%d) failed\n",
+			sglen * sizeof(struct scatterlist));
+		ret = -ENOMEM;
+		goto done;
 	}
 
-	return result;
+	kmemleak_not_leak(memdesc->sg);
+
+	memdesc->sglen = sglen;
+	sg_init_table(memdesc->sg, sglen);
+
+	for (i = 0; i < memdesc->sglen; i++) {
+		struct page *page = alloc_page(GFP_KERNEL | __GFP_ZERO |
+						__GFP_HIGHMEM);
+		if (!page) {
+			ret = -ENOMEM;
+			memdesc->sglen = i;
+			goto done;
+		}
+		flush_dcache_page(page);
+		sg_set_page(&memdesc->sg[i], page, PAGE_SIZE, 0);
+	}
+	outer_cache_range_op_sg(memdesc->sg, memdesc->sglen,
+				KGSL_CACHE_OP_FLUSH);
+
+	ret = kgsl_mmu_map(pagetable, memdesc, protflags);
+
+	if (ret)
+		goto done;
+
+	KGSL_STATS_ADD(size, kgsl_driver.stats.page_alloc,
+		kgsl_driver.stats.page_alloc_max);
+
+	order = get_order(size);
+
+	if (order < 16)
+		kgsl_driver.stats.histogram[order]++;
+
+done:
+	if (ret)
+		kgsl_sharedmem_free(memdesc);
+
+	return ret;
 }
 
 int
-kgsl_sharedmem_vmalloc(struct kgsl_memdesc *memdesc,
+kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 		       struct kgsl_pagetable *pagetable, size_t size)
 {
-	void *ptr;
-
+	int ret = 0;
 	BUG_ON(size == 0);
 
 	size = ALIGN(size, PAGE_SIZE * 2);
-	ptr = vmalloc(size);
 
-	if (ptr  == NULL) {
-		KGSL_CORE_ERR("vmalloc(%d) failed\n", size);
-		return -ENOMEM;
-	}
-
-	return _kgsl_sharedmem_vmalloc(memdesc, pagetable, ptr, size,
+	ret =  _kgsl_sharedmem_page_alloc(memdesc, pagetable, size,
 		GSL_PT_PAGE_RV | GSL_PT_PAGE_WV);
+	if (!ret)
+		ret = kgsl_page_alloc_map_kernel(memdesc);
+	if (ret)
+		kgsl_sharedmem_free(memdesc);
+	return ret;
 }
-EXPORT_SYMBOL(kgsl_sharedmem_vmalloc);
+EXPORT_SYMBOL(kgsl_sharedmem_page_alloc);
 
 int
-kgsl_sharedmem_vmalloc_user(struct kgsl_memdesc *memdesc,
+kgsl_sharedmem_page_alloc_user(struct kgsl_memdesc *memdesc,
 			    struct kgsl_pagetable *pagetable,
 			    size_t size, int flags)
 {
-	void *ptr;
 	unsigned int protflags;
 
 	BUG_ON(size == 0);
-	ptr = vmalloc_user(size);
-
-	if (ptr == NULL) {
-		KGSL_CORE_ERR("vmalloc_user(%d) failed: allocated=%d\n",
-			      size, kgsl_driver.stats.vmalloc);
-		return -ENOMEM;
-	}
 
 	protflags = GSL_PT_PAGE_RV;
 	if (!(flags & KGSL_MEMFLAGS_GPUREADONLY))
 		protflags |= GSL_PT_PAGE_WV;
 
-	return _kgsl_sharedmem_vmalloc(memdesc, pagetable, ptr, size,
+	return _kgsl_sharedmem_page_alloc(memdesc, pagetable, size,
 		protflags);
 }
-EXPORT_SYMBOL(kgsl_sharedmem_vmalloc_user);
+EXPORT_SYMBOL(kgsl_sharedmem_page_alloc_user);
 
 int
 kgsl_sharedmem_alloc_coherent(struct kgsl_memdesc *memdesc, size_t size)
 {
+	int result = 0;
+
 	size = ALIGN(size, PAGE_SIZE);
+
+	memdesc->size = size;
+	memdesc->ops = &kgsl_coherent_ops;
 
 	memdesc->hostptr = dma_alloc_coherent(NULL, size, &memdesc->physaddr,
 					      GFP_KERNEL);
 	if (memdesc->hostptr == NULL) {
 		KGSL_CORE_ERR("dma_alloc_coherent(%d) failed\n", size);
-		return -ENOMEM;
+		result = -ENOMEM;
+		goto err;
 	}
 
-	memdesc->size = size;
-	memdesc->ops = &kgsl_coherent_ops;
+	result = memdesc_sg_phys(memdesc, memdesc->physaddr, size);
+	if (result)
+		goto err;
 
 	/* Record statistics */
 
 	KGSL_STATS_ADD(size, kgsl_driver.stats.coherent,
 		       kgsl_driver.stats.coherent_max);
 
-	return 0;
+err:
+	if (result)
+		kgsl_sharedmem_free(memdesc);
+
+	return result;
 }
 EXPORT_SYMBOL(kgsl_sharedmem_alloc_coherent);
 
@@ -588,8 +604,10 @@ void kgsl_sharedmem_free(struct kgsl_memdesc *memdesc)
 	if (memdesc->gpuaddr)
 		kgsl_mmu_unmap(memdesc->pagetable, memdesc);
 
-	if (memdesc->ops->free)
+	if (memdesc->ops && memdesc->ops->free)
 		memdesc->ops->free(memdesc);
+
+	kgsl_sg_free(memdesc->sg, memdesc->sglen);
 
 	memset(memdesc, 0, sizeof(*memdesc));
 }
@@ -599,8 +617,11 @@ static int
 _kgsl_sharedmem_ebimem(struct kgsl_memdesc *memdesc,
 			struct kgsl_pagetable *pagetable, size_t size)
 {
-	int result;
+	int result = 0;
 
+	memdesc->size = size;
+	memdesc->pagetable = pagetable;
+	memdesc->ops = &kgsl_ebimem_ops;
 	memdesc->physaddr = allocate_contiguous_ebi_nomap(size, SZ_8K);
 
 	if (memdesc->physaddr == 0) {
@@ -609,18 +630,23 @@ _kgsl_sharedmem_ebimem(struct kgsl_memdesc *memdesc,
 		return -ENOMEM;
 	}
 
-	memdesc->size = size;
-	memdesc->pagetable = pagetable;
-	memdesc->ops = &kgsl_ebimem_ops;
+	result = memdesc_sg_phys(memdesc, memdesc->physaddr, size);
+
+	if (result)
+		goto err;
 
 	result = kgsl_mmu_map(pagetable, memdesc,
 		GSL_PT_PAGE_RV | GSL_PT_PAGE_WV);
 
 	if (result)
-		kgsl_sharedmem_free(memdesc);
+		goto err;
 
 	KGSL_STATS_ADD(size, kgsl_driver.stats.coherent,
 		kgsl_driver.stats.coherent_max);
+
+err:
+	if (result)
+		kgsl_sharedmem_free(memdesc);
 
 	return result;
 }
@@ -663,13 +689,17 @@ kgsl_sharedmem_readl(const struct kgsl_memdesc *memdesc,
 			uint32_t *dst,
 			unsigned int offsetbytes)
 {
+	uint32_t *src;
 	BUG_ON(memdesc == NULL || memdesc->hostptr == NULL || dst == NULL);
-	WARN_ON(offsetbytes + sizeof(unsigned int) > memdesc->size);
+	WARN_ON(offsetbytes % sizeof(uint32_t) != 0);
+	if (offsetbytes % sizeof(uint32_t) != 0)
+		return -EINVAL;
 
-	if (offsetbytes + sizeof(unsigned int) > memdesc->size)
+	WARN_ON(offsetbytes + sizeof(uint32_t) > memdesc->size);
+	if (offsetbytes + sizeof(uint32_t) > memdesc->size)
 		return -ERANGE;
-
-	*dst = readl_relaxed(memdesc->hostptr + offsetbytes);
+	src = (uint32_t *)(memdesc->hostptr + offsetbytes);
+	*dst = *src;
 	return 0;
 }
 EXPORT_SYMBOL(kgsl_sharedmem_readl);
@@ -679,12 +709,19 @@ kgsl_sharedmem_writel(const struct kgsl_memdesc *memdesc,
 			unsigned int offsetbytes,
 			uint32_t src)
 {
+	uint32_t *dst;
 	BUG_ON(memdesc == NULL || memdesc->hostptr == NULL);
-	BUG_ON(offsetbytes + sizeof(unsigned int) > memdesc->size);
+	WARN_ON(offsetbytes % sizeof(uint32_t) != 0);
+	if (offsetbytes % sizeof(uint32_t) != 0)
+		return -EINVAL;
 
-	kgsl_cffdump_setmem(memdesc->physaddr + offsetbytes,
-		src, sizeof(uint));
-	writel_relaxed(src, memdesc->hostptr + offsetbytes);
+	WARN_ON(offsetbytes + sizeof(uint32_t) > memdesc->size);
+	if (offsetbytes + sizeof(uint32_t) > memdesc->size)
+		return -ERANGE;
+	kgsl_cffdump_setmem(memdesc->gpuaddr + offsetbytes,
+		src, sizeof(uint32_t));
+	dst = (uint32_t *)(memdesc->hostptr + offsetbytes);
+	*dst = src;
 	return 0;
 }
 EXPORT_SYMBOL(kgsl_sharedmem_writel);
@@ -696,9 +733,39 @@ kgsl_sharedmem_set(const struct kgsl_memdesc *memdesc, unsigned int offsetbytes,
 	BUG_ON(memdesc == NULL || memdesc->hostptr == NULL);
 	BUG_ON(offsetbytes + sizebytes > memdesc->size);
 
-	kgsl_cffdump_setmem(memdesc->physaddr + offsetbytes, value,
-		sizebytes);
+	kgsl_cffdump_setmem(memdesc->gpuaddr + offsetbytes, value,
+			    sizebytes);
 	memset(memdesc->hostptr + offsetbytes, value, sizebytes);
 	return 0;
 }
 EXPORT_SYMBOL(kgsl_sharedmem_set);
+
+/*
+ * kgsl_sharedmem_map_vma - Map a user vma to physical memory
+ *
+ * @vma - The user vma to map
+ * @memdesc - The memory descriptor which contains information about the
+ * physical memory
+ *
+ * Return: 0 on success else error code
+ */
+int
+kgsl_sharedmem_map_vma(struct vm_area_struct *vma,
+			const struct kgsl_memdesc *memdesc)
+{
+	unsigned long addr = vma->vm_start;
+	unsigned long size = vma->vm_end - vma->vm_start;
+	int ret, i = 0;
+
+	if (!memdesc->sg || (size != memdesc->size) ||
+		(memdesc->sglen != (size / PAGE_SIZE)))
+		return -EINVAL;
+
+	for (; addr < vma->vm_end; addr += PAGE_SIZE, i++) {
+		ret = vm_insert_page(vma, addr, sg_page(&memdesc->sg[i]));
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(kgsl_sharedmem_map_vma);

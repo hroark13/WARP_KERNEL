@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -97,7 +97,6 @@ static int __flush_iotlb(struct iommu_domain *domain)
 	}
 #endif
 
-	mb();
 	list_for_each_entry(ctx_drvdata, &priv->list_attached, attached_elm) {
 		if (!ctx_drvdata->pdev || !ctx_drvdata->pdev->dev.parent)
 			BUG();
@@ -139,7 +138,6 @@ static void __reset_context(void __iomem *base, int ctx)
 	SET_TLBLKCR(base, ctx, 0);
 	SET_PRRR(base, ctx, 0);
 	SET_NMRR(base, ctx, 0);
-	mb();
 }
 
 static void __program_context(void __iomem *base, int ctx, phys_addr_t pgtable)
@@ -208,7 +206,6 @@ static void __program_context(void __iomem *base, int ctx, phys_addr_t pgtable)
 
 	/* Enable the MMU */
 	SET_M(base, ctx, 1);
-	mb();
 }
 
 static int msm_iommu_domain_init(struct iommu_domain *domain)
@@ -583,10 +580,8 @@ static phys_addr_t msm_iommu_iova_to_phys(struct iommu_domain *domain,
 
 	/* Invalidate context TLB */
 	SET_CTX_TLBIALL(base, ctx, 0);
-	mb();
-	SET_V2PPR(base, ctx, va & V2Pxx_VA);
+	SET_V2PPR_VA(base, ctx, va >> V2Pxx_VA_SHIFT);
 
-	mb();
 	par = GET_PAR(base, ctx);
 
 	/* We are dealing with a supersection */
@@ -642,7 +637,7 @@ irqreturn_t msm_iommu_fault_handler(int irq, void *dev_id)
 	struct msm_iommu_drvdata *drvdata = dev_id;
 	void __iomem *base;
 	unsigned int fsr;
-	int i, ret;
+	int ncb, i, ret;
 
 	spin_lock(&msm_iommu_lock);
 
@@ -660,7 +655,8 @@ irqreturn_t msm_iommu_fault_handler(int irq, void *dev_id)
 	if (ret)
 		goto fail;
 
-	for (i = 0; i < drvdata->ncb; i++) {
+	ncb = GET_NCB(base)+1;
+	for (i = 0; i < ncb; i++) {
 		fsr = GET_FSR(base, i);
 		if (fsr) {
 			pr_err("Fault occurred in context %d.\n", i);

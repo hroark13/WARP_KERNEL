@@ -1,29 +1,13 @@
-/* Copyright (c) 2008-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2008-2012, Code Aurora Forum. All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- *       copyright notice, this list of conditions and the following
- *       disclaimer in the documentation and/or other materials provided
- *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
  *
- * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
- * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
- * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
- * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  */
 #ifndef __ADRENO_H
@@ -40,6 +24,7 @@
 		KGSL_CONTAINER_OF(device, struct adreno_device, dev)
 
 /* Flags to control command packet settings */
+#define KGSL_CMD_FLAGS_NONE             0x00000000
 #define KGSL_CMD_FLAGS_PMODE		0x00000001
 #define KGSL_CMD_FLAGS_NO_TS_CMP	0x00000002
 #define KGSL_CMD_FLAGS_NOT_KERNEL_CMD	0x00000004
@@ -60,6 +45,8 @@
 #define ADRENO_ISTORE_BYTES 12
 #define ADRENO_ISTORE_WORDS 3
 #define ADRENO_ISTORE_START 0x5000
+
+#define ADRENO_NUM_CTX_SWITCH_ALLOWED_BEFORE_DRAW	50
 
 enum adreno_gpurev {
 	ADRENO_REV_UNKNOWN = 0,
@@ -89,20 +76,28 @@ struct adreno_device {
 	unsigned int wait_timeout;
 	unsigned int istore_size;
 	unsigned int pix_shader_start;
+	unsigned int ib_check_level;
 };
 
 struct adreno_gpudev {
-	int (*ctxt_gpustate_shadow)(struct adreno_device *,
-		struct adreno_context *);
-	int (*ctxt_gmem_shadow)(struct adreno_device *,
-		struct adreno_context *);
+	/* keeps track of when we need to execute the draw workaround code */
+	int ctx_switches_since_last_draw;
+	int (*ctxt_create)(struct adreno_device *, struct adreno_context *);
 	void (*ctxt_save)(struct adreno_device *, struct adreno_context *);
 	void (*ctxt_restore)(struct adreno_device *, struct adreno_context *);
+	void (*ctxt_draw_workaround)(struct adreno_device *);
 	irqreturn_t (*irq_handler)(struct adreno_device *);
 	void (*irq_control)(struct adreno_device *, int);
+	void * (*snapshot)(struct adreno_device *, void *, int *, int);
 };
 
 extern struct adreno_gpudev adreno_a2xx_gpudev;
+
+/* A2XX register sets defined in adreno_a2xx.c */
+extern const unsigned int a200_registers[];
+extern const unsigned int a220_registers[];
+extern const unsigned int a200_registers_count;
+extern const unsigned int a220_registers_count;
 
 int adreno_idle(struct kgsl_device *device, unsigned int timeout);
 void adreno_regread(struct kgsl_device *device, unsigned int offsetwords,
@@ -110,13 +105,16 @@ void adreno_regread(struct kgsl_device *device, unsigned int offsetwords,
 void adreno_regwrite(struct kgsl_device *device, unsigned int offsetwords,
 				unsigned int value);
 
-const struct kgsl_memdesc *adreno_find_region(struct kgsl_device *device,
+struct kgsl_memdesc *adreno_find_region(struct kgsl_device *device,
 						unsigned int pt_base,
 						unsigned int gpuaddr,
 						unsigned int size);
 
 uint8_t *adreno_convertaddr(struct kgsl_device *device,
 	unsigned int pt_base, unsigned int gpuaddr, unsigned int size);
+
+void *adreno_snapshot(struct kgsl_device *device, void *snapshot, int *remain,
+		int hang);
 
 static inline int adreno_is_a200(struct adreno_device *adreno_dev)
 {

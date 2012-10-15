@@ -1,29 +1,13 @@
 /* Copyright (c) 2002,2007-2011, Code Aurora Forum. All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- *       copyright notice, this list of conditions and the following
- *       disclaimer in the documentation and/or other materials provided
- *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
  *
- * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
- * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
- * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
- * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  */
 #ifndef __ADRENO_PM4TYPES_H
@@ -44,11 +28,6 @@
 
 /* skip N 32-bit words to get to the next packet */
 #define CP_NOP			0x10
-
-/* indirect buffer dispatch.  prefetch parser uses this packet type to determine
-*  whether to pre-fetch the IB
-*/
-#define CP_INDIRECT_BUFFER	0x3f
 
 /* indirect buffer dispatch.  same as IB, but init is pipelined */
 #define CP_INDIRECT_BUFFER_PFD	0x37
@@ -133,6 +112,9 @@
 /* load constants from a location in memory */
 #define CP_LOAD_CONSTANT_CONTEXT 0x2e
 
+/* (A2x) sets binning configuration registers */
+#define CP_SET_BIN_DATA             0x2f
+
 /* selective invalidation of state pointers */
 #define CP_INVALIDATE_STATE	0x3b
 
@@ -173,6 +155,16 @@
 
 #define CP_SET_PROTECTED_MODE  0x5f /* sets the register protection mode */
 
+/*
+ * for a3xx
+ */
+
+/* Conditionally load a IB based on a flag */
+#define CP_COND_INDIRECT_BUFFER_PFE 0x3A /* prefetch enabled */
+#define CP_COND_INDIRECT_BUFFER_PFD 0x32 /* prefetch disabled */
+
+/* Load a buffer with pre-fetch enabled */
+#define CP_INDIRECT_BUFFER_PFE 0x3F
 
 /* packet header building macros */
 #define cp_type0_packet(regindx, cnt) \
@@ -194,16 +186,35 @@
 #define cp_nop_packet(cnt) \
 	 (CP_TYPE3_PKT | (((cnt)-1) << 16) | (CP_NOP << 8))
 
+#define pkt_is_type0(pkt) (((pkt) & 0XC0000000) == CP_TYPE0_PKT)
+
+#define type0_pkt_size(pkt) ((((pkt) >> 16) & 0x3FFF) + 1)
+#define type0_pkt_offset(pkt) ((pkt) & 0x7FFF)
+
+#define pkt_is_type3(pkt) (((pkt) & 0xC0000000) == CP_TYPE3_PKT)
+
+#define cp_type3_opcode(pkt) (((pkt) >> 8) & 0xFF)
+#define type3_pkt_size(pkt) ((((pkt) >> 16) & 0x3FFF) + 1)
 
 /* packet headers */
 #define CP_HDR_ME_INIT	cp_type3_packet(CP_ME_INIT, 18)
 #define CP_HDR_INDIRECT_BUFFER_PFD cp_type3_packet(CP_INDIRECT_BUFFER_PFD, 2)
-#define CP_HDR_INDIRECT_BUFFER	cp_type3_packet(CP_INDIRECT_BUFFER, 2)
+#define CP_HDR_INDIRECT_BUFFER_PFE cp_type3_packet(CP_INDIRECT_BUFFER_PFE, 2)
 
 /* dword base address of the GFX decode space */
 #define SUBBLOCK_OFFSET(reg) ((unsigned int)((reg) - (0x2000)))
 
 /* gmem command buffer length */
 #define CP_REG(reg) ((0x4 << 16) | (SUBBLOCK_OFFSET(reg)))
+
+
+/* Return 1 if the command is an indirect buffer of any kind */
+static inline int adreno_cmd_is_ib(unsigned int cmd)
+{
+	return (cmd == cp_type3_packet(CP_INDIRECT_BUFFER_PFE, 2) ||
+		cmd == cp_type3_packet(CP_INDIRECT_BUFFER_PFD, 2) ||
+		cmd == cp_type3_packet(CP_COND_INDIRECT_BUFFER_PFE, 2) ||
+		cmd == cp_type3_packet(CP_COND_INDIRECT_BUFFER_PFD, 2));
+}
 
 #endif	/* __ADRENO_PM4TYPES_H */

@@ -1,29 +1,13 @@
-/* Copyright (c) 2002,2007-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2002,2007-2012, Code Aurora Forum. All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- *       copyright notice, this list of conditions and the following
- *       disclaimer in the documentation and/or other materials provided
- *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
  *
- * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
- * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
- * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
- * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  */
 #ifndef __KGSL_DEVICE_H
@@ -31,7 +15,6 @@
 
 #include <linux/idr.h>
 #include <linux/wakelock.h>
-
 #include <linux/earlysuspend.h>
 
 #include "kgsl.h"
@@ -107,6 +90,8 @@ struct kgsl_functable {
 		struct kgsl_power_stats *stats);
 	void (*irqctrl)(struct kgsl_device *device, int state);
 	unsigned int (*gpuid)(struct kgsl_device *device);
+	void * (*snapshot)(struct kgsl_device *device, void *snapshot,
+		int *remain, int hang);
 	/* Optional functions - these functions are not mandatory.  The
 	   driver will check that the function pointer is not NULL before
 	   calling the hook */
@@ -141,6 +126,7 @@ struct kgsl_event {
 	void (*func)(struct kgsl_device *, void *, u32);
 	void *priv;
 	struct list_head list;
+	struct kgsl_device_private *owner;
 };
 
 
@@ -169,7 +155,6 @@ struct kgsl_device {
 	uint32_t state;
 	uint32_t requested_state;
 
-	struct list_head memqueue;
 	unsigned int active_cnt;
 	struct completion suspend_gate;
 
@@ -180,6 +165,15 @@ struct kgsl_device {
 	struct dentry *d_debugfs;
 	struct idr context_idr;
 	struct early_suspend display_off;
+
+	void *snapshot;		/* Pointer to the snapshot memory region */
+	int snapshot_maxsize;   /* Max size of the snapshot region */
+	int snapshot_size;      /* Current size of the snapshot region */
+	u32 snapshot_timestamp;	/* Timestamp of the last valid snapshot */
+	int snapshot_frozen;	/* 1 if the snapshot output is frozen until
+				   it gets read by the user.  This avoids
+				   losing the output on multiple hangs  */
+	struct kobject snapshot_kobj;
 
 	/* Logging levels */
 	int cmd_log;
@@ -192,6 +186,7 @@ struct kgsl_device {
 	struct kobject pwrscale_kobj;
 	struct work_struct ts_expired_ws;
 	struct list_head events;
+	s64 on_time;
 };
 
 struct kgsl_context {
@@ -202,13 +197,18 @@ struct kgsl_context {
 
 	/* Pointer to the device specific context information */
 	void *devctxt;
+	/*
+	 * Status indicating whether a gpu reset occurred and whether this
+	 * context was responsible for causing it
+	 */
+	unsigned int reset_status;
 };
 
 struct kgsl_process_private {
 	unsigned int refcnt;
 	pid_t pid;
 	spinlock_t mem_lock;
-	struct list_head mem_list;
+	struct rb_root mem_rb;
 	struct kgsl_pagetable *pagetable;
 	struct list_head list;
 	struct kobject kobj;
@@ -300,10 +300,11 @@ static inline struct kgsl_device *kgsl_device_from_dev(struct device *dev)
 
 static inline int kgsl_create_device_workqueue(struct kgsl_device *device)
 {
-	device->work_queue = create_workqueue(device->name);
+	device->work_queue = create_singlethread_workqueue(device->name);
 	if (!device->work_queue) {
-		KGSL_DRV_ERR(device, "create_workqueue(%s) failed\n",
-			device->name);
+		KGSL_DRV_ERR(device,
+			     "create_singlethread_workqueue(%s) failed\n",
+			     device->name);
 		return -EINVAL;
 	}
 	return 0;
@@ -332,5 +333,11 @@ int kgsl_unregister_ts_notifier(struct kgsl_device *device,
 int kgsl_device_platform_probe(struct kgsl_device *device,
 		irqreturn_t (*dev_isr) (int, void*));
 void kgsl_device_platform_remove(struct kgsl_device *device);
+
+const char *kgsl_pwrstate_to_str(unsigned int state);
+
+int kgsl_device_snapshot_init(struct kgsl_device *device);
+int kgsl_device_snapshot(struct kgsl_device *device, int hang);
+void kgsl_device_snapshot_close(struct kgsl_device *device);
 
 #endif  /* __KGSL_DEVICE_H */

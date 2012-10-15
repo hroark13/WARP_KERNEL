@@ -1,29 +1,13 @@
-/* Copyright (c) 2002,2007-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2002,2007-2012, Code Aurora Forum. All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above
- *       copyright notice, this list of conditions and the following
- *       disclaimer in the documentation and/or other materials provided
- *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
  *
- * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS
- * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
- * BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
- * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
- * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  */
 #ifndef __A200_REG_H
@@ -370,7 +354,7 @@ union reg_cp_rb_cntl {
 #define REG_RB_EDRAM_INFO                0x0F02
 #define REG_RB_MODECONTROL               0x2208
 #define REG_RB_SURFACE_INFO              0x2000
-#define REG_RB_SAMPLE_POS		 0x220a
+#define REG_RB_SAMPLE_POS                0x220a
 
 #define REG_SCRATCH_ADDR                 0x01DD
 #define REG_SCRATCH_REG0                 0x0578
@@ -431,5 +415,38 @@ union reg_cp_rb_cntl {
 #define REG_A225_GRAS_UCP0X              0x2340
 #define REG_A225_GRAS_UCP5W              0x2357
 #define REG_A225_GRAS_UCP_ENABLED        0x2360
+
+/* Debug registers used by snapshot */
+#define REG_PA_SU_DEBUG_CNTL            0x0C80
+#define REG_PA_SU_DEBUG_DATA            0x0C81
+#define REG_RB_DEBUG_CNTL               0x0F26
+#define REG_RB_DEBUG_DATA               0x0F27
+#define REG_PC_DEBUG_CNTL               0x0C38
+#define REG_PC_DEBUG_DATA               0x0C39
+#define REG_GRAS_DEBUG_CNTL             0x0C80
+#define REG_GRAS_DEBUG_DATA             0x0C81
+#define REG_SQ_DEBUG_MISC               0x0D05
+#define REG_SQ_DEBUG_INPUT_FSM          0x0DAE
+#define REG_SQ_DEBUG_CONST_MGR_FSM      0x0DAF
+#define REG_SQ_DEBUG_EXP_ALLOC          0x0DB3
+#define REG_SQ_DEBUG_FSM_ALU_0          0x0DB1
+#define REG_SQ_DEBUG_FSM_ALU_1          0x0DB2
+#define REG_SQ_DEBUG_PTR_BUFF           0x0DB4
+#define REG_SQ_DEBUG_GPR_VTX            0x0DB5
+#define REG_SQ_DEBUG_GPR_PIX            0x0DB6
+#define REG_SQ_DEBUG_TB_STATUS_SEL      0x0DB7
+#define REG_SQ_DEBUG_VTX_TB_0           0x0DB8
+#define REG_SQ_DEBUG_VTX_TB_1           0x0DB9
+#define REG_SQ_DEBUG_VTX_TB_STATE_MEM   0x0DBB
+#define REG_SQ_DEBUG_TP_FSM             0x0DB0
+#define REG_SQ_DEBUG_VTX_TB_STATUS_REG  0x0DBA
+#define REG_SQ_DEBUG_PIX_TB_0           0x0DBC
+#define REG_SQ_DEBUG_PIX_TB_STATUS_REG_0 0x0DBD
+#define REG_SQ_DEBUG_PIX_TB_STATUS_REG_1 0x0DBE
+#define REG_SQ_DEBUG_PIX_TB_STATUS_REG_2 0x0DBF
+#define REG_SQ_DEBUG_PIX_TB_STATUS_REG_3 0x0DC0
+#define REG_SQ_DEBUG_PIX_TB_STATE_MEM   0x0DC1
+#define REG_SQ_DEBUG_MISC_0             0x2309
+#define REG_SQ_DEBUG_MISC_1             0x230A
 
 #endif /* __A200_REG_H */

@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -85,9 +85,9 @@ fail:
 }
 EXPORT_SYMBOL(msm_iommu_get_ctx);
 
-static void msm_iommu_reset(void __iomem *base, int ncb)
+static void msm_iommu_reset(void __iomem *base)
 {
-	int ctx;
+	int ctx, ncb;
 
 	SET_RPUE(base, 0);
 	SET_RPUEIE(base, 0);
@@ -100,6 +100,7 @@ static void msm_iommu_reset(void __iomem *base, int ncb)
 	SET_GLOBAL_TLBIALL(base, 0);
 	SET_RPU_ACR(base, 0);
 	SET_TLBLKCRWE(base, 1);
+	ncb = GET_NCB(base)+1;
 
 	for (ctx = 0; ctx < ncb; ctx++) {
 		SET_BPRCOSH(base, ctx, 0);
@@ -124,7 +125,6 @@ static void msm_iommu_reset(void __iomem *base, int ncb)
 		SET_NMRR(base, ctx, 0);
 		SET_CONTEXTIDR(base, ctx, 0);
 	}
-	mb();
 }
 
 static int msm_iommu_probe(struct platform_device *pdev)
@@ -136,7 +136,7 @@ static int msm_iommu_probe(struct platform_device *pdev)
 	struct msm_iommu_dev *iommu_dev = pdev->dev.platform_data;
 	void __iomem *regs_base;
 	resource_size_t	len;
-	int ret, irq, par;
+	int ret, ncb, nm2v, irq;
 
 	if (pdev->id == -1) {
 		msm_iommu_root_dev = pdev;
@@ -211,20 +211,10 @@ static int msm_iommu_probe(struct platform_device *pdev)
 		goto fail_io;
 	}
 
-	msm_iommu_reset(regs_base, iommu_dev->ncb);
-
-	SET_M(regs_base, 0, 1);
-	SET_PAR(regs_base, 0, 0);
-	SET_V2PCFG(regs_base, 0, 1);
-	SET_V2PPR(regs_base, 0, 0);
-	mb();
-	par = GET_PAR(regs_base, 0);
-	SET_V2PCFG(regs_base, 0, 0);
-	SET_M(regs_base, 0, 0);
 	mb();
 
-	if (!par) {
-		pr_err("%s: Invalid PAR value detected\n", iommu_dev->name);
+	if (GET_IDR(regs_base) == 0) {
+		pr_err("Invalid IDR value detected\n");
 		ret = -ENODEV;
 		goto fail_io;
 	}
@@ -236,15 +226,17 @@ static int msm_iommu_probe(struct platform_device *pdev)
 		goto fail_io;
 	}
 
-
+	msm_iommu_reset(regs_base);
 	drvdata->pclk = iommu_pclk;
 	drvdata->clk = iommu_clk;
 	drvdata->base = regs_base;
 	drvdata->irq = irq;
-	drvdata->ncb = iommu_dev->ncb;
+
+	nm2v = GET_NM2VCBMT((unsigned long) regs_base);
+	ncb = GET_NCB((unsigned long) regs_base);
 
 	pr_info("device %s mapped at %p, irq %d with %d ctx banks\n",
-		iommu_dev->name, regs_base, irq, iommu_dev->ncb);
+			iommu_dev->name, regs_base, irq, ncb+1);
 
 	platform_set_drvdata(pdev, drvdata);
 
@@ -353,7 +345,6 @@ static int msm_iommu_ctx_probe(struct platform_device *pdev)
 		/* Set security bit override to be Non-secure */
 		SET_NSCFG(drvdata->base, mid, 3);
 	}
-	mb();
 
 	if (drvdata->clk)
 		clk_disable(drvdata->clk);

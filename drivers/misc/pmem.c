@@ -19,31 +19,21 @@
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/mm.h>
-#include <linux/mm_types.h>
 #include <linux/list.h>
-#include <linux/vmalloc.h>
-#include <linux/io.h>
 #include <linux/debugfs.h>
 #include <linux/android_pmem.h>
 #include <linux/mempolicy.h>
 #include <linux/kobject.h>
-#include <linux/pm_runtime.h>
-#ifdef CONFIG_MEMORY_HOTPLUG
-#include <linux/memory.h>
-#include <linux/memory_hotplug.h>
-#endif
 #include <asm/io.h>
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
 #include <asm/sizes.h>
-#include <asm/mach/map.h>
-#include <asm/page.h>
+#include <linux/pm_runtime.h>
 
 #define PMEM_MAX_USER_SPACE_DEVICES (10)
 #define PMEM_MAX_KERNEL_SPACE_DEVICES (2)
 #define PMEM_MAX_DEVICES \
 	(PMEM_MAX_USER_SPACE_DEVICES + PMEM_MAX_KERNEL_SPACE_DEVICES)
-
 #define PMEM_MAX_ORDER (128)
 #define PMEM_MIN_ALLOC PAGE_SIZE
 
@@ -132,20 +122,6 @@ enum pmem_align {
 
 #define PMEM_NAME_SIZE 16
 
-#define MEMORY_STABLE				0
-#define MEMORY_UNSTABLE_NO_MEMORY_ALLOCATED	1
-#define MEMORY_UNSTABLE_MEMORY_ALLOCATED	2
-
-#define	NO_UNSTABLE_MEMORY		0
-#define	UNSTABLE_UNINITIALIZED		1
-#define	UNSTABLE_INITIALIZED		2
-
-int unstable_pmem_present;
-/* start of unstable PMEM physical memory */
-unsigned long unstable_pmem_start;
-/* size of unstable PMEM physical memory */
-unsigned long unstable_pmem_size;
-
 struct alloc_list {
 	void *addr;                  /* physical addr of allocation */
 	void *aaddr;                 /* aligned physical addr       */
@@ -166,15 +142,11 @@ struct pmem_info {
 	unsigned long num_entries;
 	/* pfn of the garbage page in memory */
 	unsigned long garbage_pfn;
-	/* memory state (stable/unstable with or without memory */
-	int memory_state;
 
 	char name[PMEM_NAME_SIZE];
 
 	/* index of the garbage page in the pmem space */
 	int garbage_index;
-	/* reserved virtual address range */
-	struct vm_struct *area;
 
 	enum pmem_allocator_type allocator_type;
 
@@ -244,32 +216,8 @@ struct pmem_info {
 
 	long (*ioctl)(struct file *, unsigned int, unsigned long);
 	int (*release)(struct inode *, struct file *);
-	/* reference count of allocations */
-	atomic_t allocation_cnt;
-	/*
-	 * request function for a region when the allocation count goes
-	 * from 0 -> 1
-	 */
-	void (*mem_request)(void *);
-	/*
-	 * release function for a region when the allocation count goes
-	 * from 1 -> 0
-	 */
-	void (*mem_release)(void *);
-	/*
-	 * private data for the request/release callback
-	 */
-	void *region_data;
-	/*
-	 * map and unmap as needed
-	 */
-	int map_on_demand;
 };
 #define to_pmem_info_id(a) (container_of(a, struct pmem_info, kobj)->id)
-
-static void ioremap_pmem(int id);
-static void pmem_put_region(int id);
-static int pmem_get_region(int id);
 
 static struct pmem_info pmem[PMEM_MAX_DEVICES];
 static int id_count;
@@ -282,7 +230,7 @@ static struct {
 #ifdef CONFIG_KERNEL_PMEM_SMI_REGION
 	{ PMEM_KERNEL_SMI_DATA_NAME,
 		PMEM_MEMTYPE_SMI,
-		PMEM_INVALID_MEMTYPE, /* MUST be set invalid if no fallback */
+		PMEM_MEMTYPE_EBI1,  /* Fall back to EBI1 automatically */
 		-1 },
 #endif
 	{ PMEM_KERNEL_EBI1_DATA_NAME,
@@ -590,72 +538,6 @@ static struct kobj_type pmem_system_ktype = {
 	.sysfs_ops = &pmem_ops,
 	.default_attrs = pmem_system_attrs,
 };
-
-static int pmem_allocate_from_id(const int id, const unsigned long size,
-						const unsigned int align)
-{
-	int ret;
-	ret = pmem_get_region(id);
-
-	if (ret)
-		return -1;
-
-	ret = pmem[id].allocate(id, size, align);
-
-	if (ret < 0)
-		pmem_put_region(id);
-
-	return ret;
-}
-
-static int pmem_free_from_id(const int id, const int index)
-{
-	pmem_put_region(id);
-	return pmem[id].free(id, index);
-
-}
-
-static int pmem_get_region(int id)
-{
-	/* Must be called with arena mutex locked */
-	atomic_inc(&pmem[id].allocation_cnt);
-	if (!pmem[id].vbase) {
-		DLOG("PMEMDEBUG: mapping for %s", pmem[id].name);
-		if (pmem[id].mem_request)
-				pmem[id].mem_request(pmem[id].region_data);
-		ioremap_pmem(id);
-
-	}
-
-	if (pmem[id].vbase)
-		return 0;
-	else {
-		if (pmem[id].mem_release)
-			pmem[id].mem_release(pmem[id].region_data);
-		atomic_dec(&pmem[id].allocation_cnt);
-		return 1;
-	}
-}
-
-static void pmem_put_region(int id)
-{
-	/* Must be called with arena mutex locked */
-	if (atomic_dec_and_test(&pmem[id].allocation_cnt)) {
-		DLOG("PMEMDEBUG: unmapping for %s", pmem[id].name);
-		BUG_ON(!pmem[id].vbase);
-		if (pmem[id].map_on_demand) {
-			/* unmap_kernel_range() flushes the caches
-			 * and removes the page table entries
-			 */
-			unmap_kernel_range((unsigned long)pmem[id].vbase,
-				pmem[id].size);
-			pmem[id].vbase = NULL;
-			if (pmem[id].mem_release)
-				pmem[id].mem_release(pmem[id].region_data);
-
-		}
-	}
-}
 
 static int get_id(struct file *file)
 {
@@ -975,7 +857,7 @@ static int pmem_release(struct inode *inode, struct file *file)
 	/* if it is not a connected file and it has an allocation, free it */
 	if (!(PMEM_FLAGS_CONNECTED & data->flags) && has_allocation(file)) {
 		mutex_lock(&pmem[id].arena_mutex);
-		ret = pmem_free_from_id(id, data->index);
+		ret = pmem[id].free(id, data->index);
 		mutex_unlock(&pmem[id].arena_mutex);
 	}
 
@@ -1013,8 +895,6 @@ static int pmem_open(struct inode *inode, struct file *file)
 	char currtask_name[FIELD_SIZEOF(struct task_struct, comm) + 1];
 #endif
 
-	if (pmem[id].memory_state == MEMORY_UNSTABLE_NO_MEMORY_ALLOCATED)
-		return -ENODEV;
 	DLOG("pid %u(%s) file %p(%ld) dev %s(id: %d)\n",
 		current->pid, get_task_comm(currtask_name, current),
 		file, file_count(file), get_name(file), id);
@@ -1171,17 +1051,17 @@ static void bitmap_bits_set_all(uint32_t *bitp, int bit_start, int bit_end)
 
 static int
 bitmap_allocate_contiguous(uint32_t *bitp, int num_bits_to_alloc,
-		int total_bits, int spacing)
+		int total_bits, int spacing, int start_bit)
 {
 	int bit_start, last_bit, word_index;
 
 	if (num_bits_to_alloc <= 0)
 		return -1;
 
-	for (bit_start = 0; ;
-		bit_start = (last_bit +
+	for (bit_start = start_bit; ;
+		bit_start = ((last_bit +
 			(word_index << PMEM_32BIT_WORD_ORDER) + spacing - 1)
-			& ~(spacing - 1)) {
+			& ~(spacing - 1)) + start_bit) {
 		int bit_end = bit_start + num_bits_to_alloc, total_words;
 
 		if (bit_end > total_bits)
@@ -1259,7 +1139,8 @@ static int reserve_quanta(const unsigned int quanta_needed,
 	ret = bitmap_allocate_contiguous(pmem[id].allocator.bitmap.bitmap,
 		quanta_needed,
 		(pmem[id].size + pmem[id].quantum - 1) / pmem[id].quantum,
-		spacing);
+		spacing,
+		start_bit);
 
 #if PMEM_DEBUG
 	if (ret < 0)
@@ -1429,7 +1310,7 @@ static int pmem_allocator_system(const int id,
 	return (int)list;
 }
 
-static pgprot_t phys_mem_access_prot(struct file *file, pgprot_t vma_prot)
+static pgprot_t pmem_phys_mem_access_prot(struct file *file, pgprot_t vma_prot)
 {
 	int id = get_id(file);
 #ifdef pgprot_writecombine
@@ -1653,7 +1534,7 @@ static struct vm_operations_struct vm_ops = {
 static int pmem_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	struct pmem_data *data = file->private_data;
-	int index = -1;
+	int index;
 	unsigned long vma_size =  vma->vm_end - vma->vm_start;
 	int ret = 0, id = get_id(file);
 
@@ -1690,7 +1571,7 @@ static int pmem_mmap(struct file *file, struct vm_area_struct *vma)
 	/* if file->private_data == unalloced, alloc*/
 	if (data->index == -1) {
 		mutex_lock(&pmem[id].arena_mutex);
-		index = pmem_allocate_from_id(id,
+		index = pmem[id].allocate(id,
 				vma->vm_end - vma->vm_start,
 				SZ_4K);
 		mutex_unlock(&pmem[id].arena_mutex);
@@ -1717,7 +1598,7 @@ static int pmem_mmap(struct file *file, struct vm_area_struct *vma)
 
 	vma->vm_pgoff = pmem[id].start_addr(id, data) >> PAGE_SHIFT;
 
-	vma->vm_page_prot = phys_mem_access_prot(file, vma->vm_page_prot);
+	vma->vm_page_prot = pmem_phys_mem_access_prot(file, vma->vm_page_prot);
 
 	if (data->flags & PMEM_FLAGS_CONNECTED) {
 		struct pmem_region_node *region_node;
@@ -2010,6 +1891,13 @@ int pmem_cache_maint(struct file *file, unsigned int cmd,
 	/* Called from kernel-space so file may be NULL */
 	if (!file)
 		return -EBADF;
+
+	/*
+	 * check that the vaddr passed for flushing is valid
+	 * so that you don't crash the kernel
+	 */
+	if (!pmem_addr->vaddr)
+		return -EINVAL;
 
 	data = file->private_data;
 	id = get_id(file);
@@ -2628,7 +2516,7 @@ static long pmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			}
 
 			mutex_lock(&pmem[id].arena_mutex);
-			data->index = pmem_allocate_from_id(id,
+			data->index = pmem[id].allocate(id,
 					arg,
 					SZ_4K);
 			mutex_unlock(&pmem[id].arena_mutex);
@@ -2675,9 +2563,9 @@ static long pmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			}
 
 			mutex_lock(&pmem[id].arena_mutex);
-			data->index = pmem_allocate_from_id(id,
-				alloc.size,
-				alloc.align);
+			data->index = pmem[id].allocate(id,
+					alloc.size,
+					alloc.align);
 			mutex_unlock(&pmem[id].arena_mutex);
 			ret = data->index == -1 ? -ENOMEM :
 				data->index;
@@ -2711,215 +2599,22 @@ static long pmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 static void ioremap_pmem(int id)
 {
-	unsigned long addr;
-	const struct mem_type *type;
-
-	DLOG("PMEMDEBUG: ioremaping for %s\n", pmem[id].name);
-	if (pmem[id].map_on_demand) {
-		addr = (unsigned long)pmem[id].area->addr;
-		if (pmem[id].cached)
-			type = get_mem_type(MT_DEVICE_CACHED);
-		else
-			type = get_mem_type(MT_DEVICE);
-		DLOG("PMEMDEBUG: Remap phys %lx to virt %lx on %s\n",
-			pmem[id].base, addr, pmem[id].name);
-		if (ioremap_page_range(addr, addr + pmem[id].size,
-			pmem[id].base, __pgprot(type->prot_pte))) {
-				pr_err("pmem: Failed to map pages\n");
-				BUG();
-		}
-		pmem[id].vbase = pmem[id].area->addr;
-		/* Flush the cache after installing page table entries to avoid
-		 * aliasing when these pages are remapped to user space.
-		 */
-		flush_cache_vmap(addr, addr + pmem[id].size);
-	} else {
-		if (pmem[id].cached)
-			pmem[id].vbase = ioremap_cached(pmem[id].base,
-						pmem[id].size);
-	#ifdef ioremap_ext_buffered
-		else if (pmem[id].buffered)
-			pmem[id].vbase = ioremap_ext_buffered(pmem[id].base,
-						pmem[id].size);
-	#endif
-		else
-			pmem[id].vbase = ioremap(pmem[id].base, pmem[id].size);
-	}
-}
-
-#ifdef CONFIG_MEMORY_HOTPLUG
-static int pmem_mapped_regions(int id)
-{
-	struct list_head *elt;
-
-	mutex_lock(&pmem[id].data_list_mutex);
-	list_for_each(elt, &pmem[id].data_list) {
-		struct pmem_data *data =
-			list_entry(elt, struct pmem_data, list);
-
-		if (data) {
-			mutex_unlock(&pmem[id].data_list_mutex);
-			return 1;
-		}
-	}
-	mutex_unlock(&pmem[id].data_list_mutex);
-	return 0;
-}
-
-static int active_unstable_pmem(void)
-{
-	int id;
-
-	for (id = 0; id < id_count; id++) {
-		if (pmem[id].memory_state == MEMORY_STABLE)
-			continue;
-		if (pmem_mapped_regions(id))
-			return 1;
-	}
-
-	return 0;
-}
-
-static void reserve_unstable_pmem(unsigned long unstable_pmem_start,
-	unsigned long unstable_pmem_size)
-{
-	reserve_hotplug_pages(unstable_pmem_start >> PAGE_SHIFT,
-		unstable_pmem_size >> PAGE_SHIFT);
-}
-
-static void unreserve_unstable_pmem(unsigned long unstable_pmem_start,
-	unsigned long unstable_pmem_size)
-{
-	unreserve_hotplug_pages(unstable_pmem_start >> PAGE_SHIFT,
-		unstable_pmem_size >> PAGE_SHIFT);
-}
-
-static void pmem_setup_unstable_devices(unsigned long start_pfn,
-	unsigned long nr_pages)
-{
-	int id;
-	unsigned long tmp;
-
-	unstable_pmem_start = start_pfn << PAGE_SHIFT;
-	tmp = unstable_pmem_start;
-
-	for (id = 0; id < id_count; id++) {
-		if (pmem[id].memory_state == MEMORY_STABLE)
-			continue;
-
-		pmem[id].base = tmp;
-		pr_info("reserving %lx bytes unstable memory at %lx \
-			for %s\n", pmem[id].size, pmem[id].base, pmem[id].name);
-		tmp += pmem[id].size;
-	}
-	unstable_pmem_size = tmp - unstable_pmem_start;
-
-	for (id = 0; id < id_count; id++) {
-		if (pmem[id].memory_state ==
-			MEMORY_UNSTABLE_NO_MEMORY_ALLOCATED) {
-			ioremap_pmem(id);
-			pmem[id].garbage_pfn =
-				page_to_pfn(alloc_page(GFP_KERNEL));
-
-			if (pmem[id].vbase == 0)
-				continue;
-			pmem[id].memory_state =
-				MEMORY_UNSTABLE_MEMORY_ALLOCATED;
-		}
-	}
-}
-
-static int pmem_mem_going_offline_callback(void *arg)
-{
-	struct memory_notify *marg = arg;
-	int id;
-
-	if ((marg->start_pfn << PAGE_SHIFT) != unstable_pmem_start)
-		return 0;
-
-	if (active_unstable_pmem()) {
-		pr_alert("unstable PMEM memory device in use \
-			prevents memory hotremove!\n");
-		return -EAGAIN;
-	}
-
-	unreserve_unstable_pmem(unstable_pmem_start, unstable_pmem_size);
-
-	for (id = 0; id < id_count; id++) {
-		if (pmem[id].memory_state == MEMORY_UNSTABLE_MEMORY_ALLOCATED)
-			pmem[id].memory_state =
-				MEMORY_UNSTABLE_NO_MEMORY_ALLOCATED;
-	}
-	return 0;
-}
-
-static int pmem_mem_online_callback(void *arg)
-{
-	struct memory_notify *marg = arg;
-	int id;
-
-
-	if (unstable_pmem_present == UNSTABLE_UNINITIALIZED) {
-		pmem_setup_unstable_devices(marg->start_pfn, marg->nr_pages);
-		pr_alert("unstable pmem start %lx size %lx\n",
-			unstable_pmem_start, unstable_pmem_size);
-		unstable_pmem_present = UNSTABLE_INITIALIZED;
-	}
-
-	if ((marg->start_pfn << PAGE_SHIFT) != unstable_pmem_start)
-		return 0;
-
-	reserve_unstable_pmem(unstable_pmem_start, unstable_pmem_size);
-
-	for (id = 0; id < id_count; id++) {
-		if (pmem[id].memory_state ==
-			MEMORY_UNSTABLE_NO_MEMORY_ALLOCATED) {
-			if (pmem[id].vbase == 0)
-				ioremap_pmem(id);
-			if (pmem[id].vbase == 0)
-				continue;
-			pmem[id].memory_state =
-				MEMORY_UNSTABLE_MEMORY_ALLOCATED;
-		}
-	}
-	return 0;
-}
-
-static int pmem_memory_callback(struct notifier_block *self,
-				unsigned long action, void *arg)
-{
-	int ret = 0;
-
-	if (unstable_pmem_present == NO_UNSTABLE_MEMORY)
-		return 0;
-
-	switch (action) {
-	case MEM_ONLINE:
-		ret = pmem_mem_online_callback(arg);
-		break;
-	case MEM_GOING_OFFLINE:
-		ret = pmem_mem_going_offline_callback(arg);
-		break;
-	case MEM_OFFLINE:
-	case MEM_GOING_ONLINE:
-	case MEM_CANCEL_ONLINE:
-	case MEM_CANCEL_OFFLINE:
-		break;
-	}
-	if (ret)
-		ret = notifier_from_errno(ret);
-	else
-		ret = NOTIFY_OK;
-	return ret;
-}
+	if (pmem[id].cached)
+		pmem[id].vbase = ioremap_cached(pmem[id].base, pmem[id].size);
+#ifdef ioremap_ext_buffered
+	else if (pmem[id].buffered)
+		pmem[id].vbase = ioremap_ext_buffered(pmem[id].base,
+					pmem[id].size);
 #endif
+	else
+		pmem[id].vbase = ioremap(pmem[id].base, pmem[id].size);
+}
 
 int pmem_setup(struct android_pmem_platform_data *pdata,
 	       long (*ioctl)(struct file *, unsigned int, unsigned long),
 	       int (*release)(struct inode *, struct file *))
 {
 	int i, index = 0, kapi_memtype_idx = -1, id, is_kernel_memtype = 0;
-	struct vm_struct *pmem_vma = NULL;
 
 	if (id_count >= PMEM_MAX_DEVICES) {
 		pr_alert("pmem: %s: unable to register driver(%s) - no more "
@@ -3005,11 +2700,6 @@ int pmem_setup(struct android_pmem_platform_data *pdata,
 	pmem[id].base = pdata->start;
 	pmem[id].size = pdata->size;
 	strlcpy(pmem[id].name, pdata->name, PMEM_NAME_SIZE);
-
-	if (pdata->unstable) {
-		pmem[id].memory_state = MEMORY_UNSTABLE_NO_MEMORY_ALLOCATED;
-		unstable_pmem_present = UNSTABLE_UNINITIALIZED;
-	}
 
 	pmem[id].num_entries = pmem[id].size / pmem[id].quantum;
 
@@ -3115,10 +2805,6 @@ int pmem_setup(struct android_pmem_platform_data *pdata,
 
 	case PMEM_ALLOCATORTYPE_SYSTEM:
 
-#ifdef CONFIG_MEMORY_HOTPLUG
-		goto err_no_mem;
-#endif
-
 		INIT_LIST_HEAD(&pmem[id].allocator.system_mem.alist);
 
 		pmem[id].allocator.system_mem.used = 0;
@@ -3170,39 +2856,23 @@ int pmem_setup(struct android_pmem_platform_data *pdata,
 		pr_info("pmem: Initializing %s (in-kernel)\n", pdata->name);
 	}
 
-	/* do not set up unstable pmem now, wait until first memory hotplug */
-	if (pmem[id].memory_state == MEMORY_UNSTABLE_NO_MEMORY_ALLOCATED)
-		return 0;
-
-	pmem[id].map_on_demand = pdata->map_on_demand;
-	if (pmem[id].map_on_demand) {
-		pmem_vma = get_vm_area(pmem[id].size, VM_IOREMAP);
-		if (!pmem_vma) {
-			pr_err("pmem: Failed to allocate virtual space for "
-					"%s\n", pdata->name);
-			goto out_put_kobj;
+	if ((!is_kernel_memtype) &&
+		(pmem[id].allocator_type != PMEM_ALLOCATORTYPE_SYSTEM)) {
+		ioremap_pmem(id);
+		if (pmem[id].vbase == 0) {
+			pr_err("pmem: ioremap failed for device %s\n",
+				pmem[id].name);
+			goto error_cant_remap;
 		}
-		pr_err("pmem: Reserving virtual address range %lx - %lx for"
-				" %s\n", (unsigned long) pmem_vma->addr,
-				(unsigned long) pmem_vma->addr + pmem[id].size,
-				pdata->name);
-		pmem[id].area = pmem_vma;
-	} else
-		pmem[id].area = NULL;
+	}
+
 	pmem[id].garbage_pfn = page_to_pfn(alloc_page(GFP_KERNEL));
-	atomic_set(&pmem[id].allocation_cnt, 0);
-
-	if (pdata->setup_region)
-		pmem[id].region_data = pdata->setup_region();
-
-	if (pdata->request_region)
-		pmem[id].mem_request = pdata->request_region;
-
-	if (pdata->release_region)
-		pmem[id].mem_release = pdata->release_region;
 
 	return 0;
 
+error_cant_remap:
+	if (!is_kernel_memtype)
+		misc_deregister(&pmem[id].dev);
 err_cant_register_device:
 out_put_kobj:
 	kobject_put(&pmem[id].kobj);
@@ -3282,9 +2952,6 @@ static int __init pmem_init(void)
 		return -ENOMEM;
 	}
 
-#ifdef CONFIG_MEMORY_HOTPLUG
-	hotplug_memory_notifier(pmem_memory_callback, 0);
-#endif
 	return platform_driver_register(&pmem_driver);
 }
 

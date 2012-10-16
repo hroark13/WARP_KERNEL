@@ -1,4 +1,4 @@
-/* Copyright (c) 2002,2007-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2002,2007-2011, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,7 +22,6 @@
 #include "adreno.h"
 #include "adreno_pm4types.h"
 #include "adreno_ringbuffer.h"
-#include "adreno_debugfs.h"
 
 #include "a2xx_reg.h"
 
@@ -247,7 +246,6 @@ int adreno_ringbuffer_start(struct adreno_ringbuffer *rb, unsigned int init_ram)
 	union reg_cp_rb_cntl cp_rb_cntl;
 	unsigned int *cmds, rb_cntl;
 	struct kgsl_device *device = rb->device;
-	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	uint cmds_gpu;
 
 	if (rb->flags & KGSL_FLAGS_STARTED)
@@ -311,11 +309,6 @@ int adreno_ringbuffer_start(struct adreno_ringbuffer *rb, unsigned int init_ram)
 	adreno_regwrite(device, REG_SCRATCH_UMSK,
 			     GSL_RB_MEMPTRS_SCRATCH_MASK);
 
-	/* update the eoptimestamp field with the last retired timestamp */
-	kgsl_sharedmem_writel(&device->memstore,
-			     KGSL_DEVICE_MEMSTORE_OFFSET(eoptimestamp),
-			     rb->timestamp);
-
 	/* load the CP ucode */
 
 	status = adreno_ringbuffer_load_pm4_ucode(device);
@@ -364,10 +357,9 @@ int adreno_ringbuffer_start(struct adreno_ringbuffer *rb, unsigned int init_ram)
 	GSL_RB_WRITE(cmds, cmds_gpu,
 		SUBBLOCK_OFFSET(REG_PA_SU_POLY_OFFSET_FRONT_SCALE));
 
-	/* Instruction memory size: */
-	GSL_RB_WRITE(cmds, cmds_gpu,
-		     (adreno_encode_istore_size(adreno_dev)
-		      | adreno_dev->pix_shader_start));
+	/* Vertex and Pixel Shader Start Addresses in instructions
+	* (3 DWORDS per instruction) */
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x80000180);
 	/* Maximum Contexts */
 	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000001);
 	/* Write Confirm Interval and The CP will wait the
@@ -399,6 +391,7 @@ void adreno_ringbuffer_stop(struct adreno_ringbuffer *rb)
 	if (rb->flags & KGSL_FLAGS_STARTED) {
 		/* ME_HALT */
 		adreno_regwrite(rb->device, REG_CP_ME_CNTL, 0x10000000);
+
 		rb->flags &= ~KGSL_FLAGS_STARTED;
 	}
 }
@@ -553,197 +546,6 @@ adreno_ringbuffer_issuecmds(struct kgsl_device *device,
 	adreno_ringbuffer_addcmds(rb, flags, cmds, sizedwords);
 }
 
-static bool _parse_ibs(struct kgsl_device_private *dev_priv, uint gpuaddr,
-			   int sizedwords);
-
-static bool
-_handle_type3(struct kgsl_device_private *dev_priv, uint *hostaddr)
-{
-	unsigned int opcode = cp_type3_opcode(*hostaddr);
-	switch (opcode) {
-	case CP_INDIRECT_BUFFER_PFD:
-	case CP_INDIRECT_BUFFER_PFE:
-	case CP_COND_INDIRECT_BUFFER_PFE:
-	case CP_COND_INDIRECT_BUFFER_PFD:
-		return _parse_ibs(dev_priv, hostaddr[1], hostaddr[2]);
-	case CP_NOP:
-	case CP_WAIT_FOR_IDLE:
-	case CP_WAIT_REG_MEM:
-	case CP_WAIT_REG_EQ:
-	case CP_WAT_REG_GTE:
-	case CP_WAIT_UNTIL_READ:
-	case CP_WAIT_IB_PFD_COMPLETE:
-	case CP_REG_RMW:
-	case CP_REG_TO_MEM:
-	case CP_MEM_WRITE:
-	case CP_MEM_WRITE_CNTR:
-	case CP_COND_EXEC:
-	case CP_COND_WRITE:
-	case CP_EVENT_WRITE:
-	case CP_EVENT_WRITE_SHD:
-	case CP_EVENT_WRITE_CFL:
-	case CP_EVENT_WRITE_ZPD:
-	case CP_DRAW_INDX:
-	case CP_DRAW_INDX_2:
-	case CP_DRAW_INDX_BIN:
-	case CP_DRAW_INDX_2_BIN:
-	case CP_VIZ_QUERY:
-	case CP_SET_STATE:
-	case CP_SET_CONSTANT:
-	case CP_IM_LOAD:
-	case CP_IM_LOAD_IMMEDIATE:
-	case CP_LOAD_CONSTANT_CONTEXT:
-	case CP_INVALIDATE_STATE:
-	case CP_SET_SHADER_BASES:
-	case CP_SET_BIN_MASK:
-	case CP_SET_BIN_SELECT:
-	case CP_SET_BIN_BASE_OFFSET:
-	case CP_SET_BIN_DATA:
-	case CP_CONTEXT_UPDATE:
-	case CP_INTERRUPT:
-	case CP_IM_STORE:
-		break;
-	/* these shouldn't come from userspace */
-	case CP_ME_INIT:
-	case CP_SET_PROTECTED_MODE:
-	default:
-		KGSL_CMD_ERR(dev_priv->device, "bad CP opcode %0x\n", opcode);
-		return false;
-		break;
-	}
-
-	return true;
-}
-
-static bool
-_handle_type0(struct kgsl_device_private *dev_priv, uint *hostaddr)
-{
-	unsigned int reg = type0_pkt_offset(*hostaddr);
-	unsigned int cnt = type0_pkt_size(*hostaddr);
-	if (reg < 0x0192 || (reg + cnt) >= 0x8000) {
-		KGSL_CMD_ERR(dev_priv->device, "bad type0 reg: 0x%0x cnt: %d\n",
-			     reg, cnt);
-		return false;
-	}
-	return true;
-}
-
-/*
- * Traverse IBs and dump them to test vector. Detect swap by inspecting
- * register writes, keeping note of the current state, and dump
- * framebuffer config to test vector
- */
-static bool _parse_ibs(struct kgsl_device_private *dev_priv,
-			   uint gpuaddr, int sizedwords)
-{
-	static uint level; /* recursion level */
-	bool ret = false;
-	uint *hostaddr, *hoststart;
-	int dwords_left = sizedwords; /* dwords left in the current command
-					 buffer */
-	struct kgsl_mem_entry *entry;
-
-	spin_lock(&dev_priv->process_priv->mem_lock);
-	entry = kgsl_sharedmem_find_region(dev_priv->process_priv,
-					   gpuaddr, sizedwords * sizeof(uint));
-	spin_unlock(&dev_priv->process_priv->mem_lock);
-	if (entry == NULL) {
-		KGSL_CMD_ERR(dev_priv->device,
-			     "no mapping for gpuaddr: 0x%08x\n", gpuaddr);
-		return false;
-	}
-
-	hostaddr = (uint *)kgsl_gpuaddr_to_vaddr(&entry->memdesc, gpuaddr);
-	if (hostaddr == NULL) {
-		KGSL_CMD_ERR(dev_priv->device,
-			     "no mapping for gpuaddr: 0x%08x\n", gpuaddr);
-		return false;
-	}
-
-	hoststart = hostaddr;
-
-	level++;
-
-	KGSL_CMD_INFO(dev_priv->device, "ib: gpuaddr:0x%08x, wc:%d, hptr:%p\n",
-		gpuaddr, sizedwords, hostaddr);
-
-	mb();
-	while (dwords_left > 0) {
-		bool cur_ret = true;
-		int count = 0; /* dword count including packet header */
-
-		switch (*hostaddr >> 30) {
-		case 0x0: /* type-0 */
-			count = (*hostaddr >> 16)+2;
-			cur_ret = _handle_type0(dev_priv, hostaddr);
-			break;
-		case 0x1: /* type-1 */
-			count = 2;
-			break;
-		case 0x3: /* type-3 */
-			count = ((*hostaddr >> 16) & 0x3fff) + 2;
-			cur_ret = _handle_type3(dev_priv, hostaddr);
-			break;
-		default:
-			KGSL_CMD_ERR(dev_priv->device, "unexpected type: "
-				"type:%d, word:0x%08x @ 0x%p, gpu:0x%08x\n",
-				*hostaddr >> 30, *hostaddr, hostaddr,
-				gpuaddr+4*(sizedwords-dwords_left));
-			cur_ret = false;
-			count = dwords_left;
-			break;
-		}
-
-		if (!cur_ret) {
-			KGSL_CMD_ERR(dev_priv->device,
-				"bad sub-type: #:%d/%d, v:0x%08x"
-				" @ 0x%p[gb:0x%08x], level:%d\n",
-				sizedwords-dwords_left, sizedwords, *hostaddr,
-				hostaddr, gpuaddr+4*(sizedwords-dwords_left),
-				level);
-
-			if (ADRENO_DEVICE(dev_priv->device)->ib_check_level
-				>= 2)
-				print_hex_dump(KERN_ERR,
-					level == 1 ? "IB1:" : "IB2:",
-					DUMP_PREFIX_OFFSET, 32, 4, hoststart,
-					sizedwords*4, 0);
-			goto done;
-		}
-
-		/* jump to next packet */
-		dwords_left -= count;
-		hostaddr += count;
-		if (dwords_left < 0) {
-			KGSL_CMD_ERR(dev_priv->device,
-				"bad count: c:%d, #:%d/%d, "
-				"v:0x%08x @ 0x%p[gb:0x%08x], level:%d\n",
-				count, sizedwords-(dwords_left+count),
-				sizedwords, *(hostaddr-count), hostaddr-count,
-				gpuaddr+4*(sizedwords-(dwords_left+count)),
-				level);
-			if (ADRENO_DEVICE(dev_priv->device)->ib_check_level
-				>= 2)
-				print_hex_dump(KERN_ERR,
-					level == 1 ? "IB1:" : "IB2:",
-					DUMP_PREFIX_OFFSET, 32, 4, hoststart,
-					sizedwords*4, 0);
-			goto done;
-		}
-	}
-
-	ret = true;
-done:
-	if (!ret)
-		KGSL_DRV_ERR(dev_priv->device,
-			"parsing failed: gpuaddr:0x%08x, "
-			"host:0x%p, wc:%d\n", gpuaddr, hoststart, sizedwords);
-
-	level--;
-
-	return ret;
-}
-
 int
 adreno_ringbuffer_issueibcmds(struct kgsl_device_private *dev_priv,
 				struct kgsl_context *context,
@@ -758,7 +560,6 @@ adreno_ringbuffer_issueibcmds(struct kgsl_device_private *dev_priv,
 	unsigned int *cmds;
 	unsigned int i;
 	struct adreno_context *drawctxt;
-	unsigned int start_index = 0;
 
 	if (device->state & KGSL_STATE_HUNG)
 		return -EBUSY;
@@ -781,22 +582,10 @@ adreno_ringbuffer_issueibcmds(struct kgsl_device_private *dev_priv,
 			" submission, size %x\n", numibs * 3);
 		return -ENOMEM;
 	}
+	for (i = 0; i < numibs; i++) {
+		(void)kgsl_cffdump_parse_ibs(dev_priv, NULL,
+			ibdesc[i].gpuaddr, ibdesc[i].sizedwords, false);
 
-	/*When preamble is enabled, the preamble buffer with state restoration
-	commands are stored in the first node of the IB chain. We can skip that
-	if a context switch hasn't occured */
-
-	if (drawctxt->flags & CTXT_FLAGS_PREAMBLE &&
-		adreno_dev->drawctxt_active == drawctxt)
-		start_index = 1;
-
-	for (i = start_index; i < numibs; i++) {
-		if (unlikely(adreno_dev->ib_check_level >= 1 &&
-		    !_parse_ibs(dev_priv, ibdesc[i].gpuaddr,
-				ibdesc[i].sizedwords))) {
-			kfree(link);
-			return -EINVAL;
-		}
 		*cmds++ = CP_HDR_INDIRECT_BUFFER_PFD;
 		*cmds++ = ibdesc[i].gpuaddr;
 		*cmds++ = ibdesc[i].sizedwords;
@@ -950,20 +739,8 @@ int adreno_ringbuffer_extract(struct adreno_ringbuffer *rb,
 			kgsl_sharedmem_readl(&rb->buffer_desc, &value, rb_rptr);
 			rb_rptr = adreno_ringbuffer_inc_wrapped(rb_rptr,
 							rb->buffer_desc.size);
-
-			/*
-			 * If other context switches were already lost and
-			 * and the current context is the one that is hanging,
-			 * then we cannot recover.  Print an error message
-			 * and leave.
-			 */
-
-			if ((copy_rb_contents == 0) && (value == cur_context)) {
-				KGSL_DRV_ERR(device, "GPU recovery could not "
-					"find the previous context\n");
-				return -EINVAL;
-			}
-
+			BUG_ON((copy_rb_contents == 0) &&
+				(value == cur_context));
 			/*
 			 * If we were copying the commands and got to this point
 			 * then we need to remove the 3 commands that appear
@@ -1033,3 +810,4 @@ adreno_ringbuffer_restore(struct adreno_ringbuffer *rb, unsigned int *rb_buff,
 	rb->wptr += num_rb_contents;
 	adreno_ringbuffer_submit(rb);
 }
+

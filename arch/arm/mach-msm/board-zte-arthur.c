@@ -2834,27 +2834,6 @@ static struct platform_device qsd_device_spi = {
 	.resource	= qsd_spi_resources,
 };
 
-#ifdef CONFIG_SPI_QSD
-static struct spi_board_info lcdc_sharp_spi_board_info[] __initdata = {
-	{
-		.modalias	= "lcdc_sharp_ls038y7dx01",
-		.mode		= SPI_MODE_1,
-		.bus_num	= 0,
-		.chip_select	= 0,
-		.max_speed_hz	= 26331429,
-	}
-};
-static struct spi_board_info lcdc_toshiba_spi_board_info[] __initdata = {
-	{
-		.modalias       = "lcdc_toshiba_ltm030dd40",
-		.mode           = SPI_MODE_3|SPI_CS_HIGH,
-		.bus_num        = 0,
-		.chip_select    = 0,
-		.max_speed_hz   = 9963243,
-	}
-};
-#endif
-
 #if defined(ZTE_ARTHUR) 	
 static struct msm_gpio qsd_spi_gpio_config_data[] = {
 	{ GPIO_CFG(0xFF, 0, GPIO_CFG_INPUT,  GPIO_CFG_NO_PULL, GPIO_CFG_2MA), "spi_clk" },
@@ -3163,14 +3142,7 @@ static struct resource msm_fb_resources[] = {
 static int msm_fb_detect_panel(const char *name)
 {
 	if (machine_is_msm7x30_fluid()) {
-		if (!strcmp(name, "lcdc_sharp_wvga_pt"))
-			return 0;
-	} else {
-		if (!strncmp(name, "mddi_toshiba_wvga_pt", 20))
-			return -EPERM;
-		else if (!strncmp(name, "lcdc_toshiba_wvga_pt", 20))
-			return 0;
-		else if (!strcmp(name, "mddi_orise"))
+		if (!strcmp(name, "mddi_orise"))
 			return -EPERM;
 	}
 	return -ENODEV;
@@ -3337,44 +3309,11 @@ struct platform_device msm_kgsl_2d0 = {
 	},
 };
 
-
-static int mddi_toshiba_pmic_bl(int level)
-{
-	int ret = -EPERM;
-
-	//ret = pmic_set_led_intensity(LED_LCD, level);
-	//LED_LCD is the green led
-	ret = pmic_low_current_led_set_current(LOW_CURRENT_LED_DRV2, level);
-
-	if (ret)
-		printk(KERN_WARNING "%s: can't set lcd backlight!\n",
-					__func__);
-	return ret;
-}
-
-static struct msm_panel_common_pdata mddi_toshiba_pdata = {
-	.pmic_backlight = mddi_toshiba_pmic_bl,
-};
-
-static struct platform_device mddi_toshiba_device = {
-	.name   = "mddi_toshiba",
-	.id     = 0,
-	.dev    = {
-		.platform_data = &mddi_toshiba_pdata,
-	}
-};
-
 static struct msm_panel_common_pdata mdp_pdata = {
 	.gpio = 30,
 	.mdp_core_clk_rate = 122880000,
 };
 
-static int lcd_panel_spi_gpio_num[] = {
-			45, /* spi_clk */
-			46, /* spi_cs  */
-			47, /* spi_mosi */
-			48, /* spi_miso */
-		};
 
 static struct msm_gpio lcd_panel_gpios[] = {
 /* Workaround, since HDMI_INT is using the same GPIO line (18), and is used as
@@ -3458,18 +3397,6 @@ static void __init msm_fb_add_devices(void)
 	msm_fb_register_device("mdp", &mdp_pdata);
 	msm_fb_register_device("lcdc", &lcdc_pdata);
 }
-
-static struct msm_panel_common_pdata lcdc_toshiba_panel_data = {
-	.gpio_num          = lcd_panel_spi_gpio_num,
-};
-
-static struct platform_device lcdc_toshiba_panel_device = {
-	.name   = "lcdc_toshiba_wvga",
-	.id     = 0,
-	.dev    = {
-		.platform_data = &lcdc_toshiba_panel_data,
-	}
-};
 
 #if defined(CONFIG_MARIMBA_CORE) && \
    (defined(CONFIG_MSM_BT_POWER) || defined(CONFIG_MSM_BT_POWER_MODULE))
@@ -4014,8 +3941,6 @@ static struct platform_device *devices[] __initdata = {
 	&android_pmem_device,
 	&msm_fb_device,
 	&msm_migrate_pages_device,
-	&mddi_toshiba_device,
-	&lcdc_toshiba_panel_device,
 #ifdef CONFIG_MSM_ROTATOR
 	&msm_rotator_device,
 #endif
@@ -5684,16 +5609,6 @@ static void __init msm7x30_init(void)
 	msm7x30_init_mmc();
 	msm7x30_init_nand();
 	msm_qsd_spi_init();
-
-#ifdef CONFIG_SPI_QSD
-	if (machine_is_msm7x30_fluid())
-		spi_register_board_info(lcdc_sharp_spi_board_info,
-			ARRAY_SIZE(lcdc_sharp_spi_board_info));
-	else
-		spi_register_board_info(lcdc_toshiba_spi_board_info,
-			ARRAY_SIZE(lcdc_toshiba_spi_board_info));
-#endif
-
 	msm_fb_add_devices();
 	msm_pm_set_platform_data(msm_pm_data, ARRAY_SIZE(msm_pm_data));
 	msm_device_i2c_init();

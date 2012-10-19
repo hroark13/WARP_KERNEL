@@ -3141,10 +3141,6 @@ static struct resource msm_fb_resources[] = {
 
 static int msm_fb_detect_panel(const char *name)
 {
-	if (machine_is_msm7x30_fluid()) {
-		if (!strcmp(name, "mddi_orise"))
-			return -EPERM;
-	}
 	return -ENODEV;
 }
 
@@ -3313,6 +3309,7 @@ static struct msm_panel_common_pdata mdp_pdata = {
 	.gpio = 30,
 	.mdp_core_clk_rate = 122880000,
 };
+
 
 
 static struct msm_gpio lcd_panel_gpios[] = {

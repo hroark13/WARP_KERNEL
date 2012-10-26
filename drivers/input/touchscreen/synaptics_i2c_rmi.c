@@ -77,6 +77,9 @@ static const char ts_keys_size[] = "0x01:102:100:1061:200:74:0x01:139:300:1061:2
 static const char ts_keys_size[] = "0x01:102:60:850:100:50:0x01:139:180:850:100:50:0x01:158:300:850:100:50:0x01:217:420:850:100:50";
 #elif defined(CONFIG_MACH_SEAN)
 static const char ts_keys_size[] = "0x01:102:40:510:100:60:0x01:139:120:510:100:60:0x01:158:200:510:100:60:0x01:217:280:510:100:60";
+#elif defined(CONFIG_MACH_WARP2)
+/*ergate-003*/
+static const char ts_keys_size[] = "0x01:158:100:1024:100:60:0x01:102:270:1024:100:60:0x01:139:440:1024:100:60";
 #elif defined(CONFIG_MACH_SKATEPLUS)
 static const char ts_keys_size[] = "0x01:102:55:838:120:60:0x01:139:240:838:120:60:0x01:158:420:838:120:60";
 #else
@@ -538,7 +541,7 @@ static int synaptics_rmi4_set_panel_state(
 	case TS_RESUME:	
 		// set nomal mode
 		mode = i2c_smbus_read_byte_data(ts->client, ts->f01.ctrl_base);
-		mode &=~0x3;
+		mode &=~0x7;
 		ret = i2c_smbus_write_byte_data(ts->client, ts->f01.ctrl_base, mode);
 		if (ret<0) pr_err("i2c_smbus_write_byte_data failed\n");
 
@@ -634,6 +637,7 @@ static void synaptics_rmi4_work_func(struct work_struct *work)
 				input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, new_report_data[i].w);//default 10
 				input_report_abs(ts->input_dev, ABS_MT_POSITION_X, new_report_data[i].x);
 				input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, new_report_data[i].y);
+				input_report_abs(ts->input_dev, ABS_MT_PRESSURE, new_report_data[i].z);		
 				input_mt_sync(ts->input_dev);
 				}
 			input_sync(ts->input_dev);
@@ -692,7 +696,7 @@ static int synaptics_rmi4_probe(
 	if (pdata){
 		//ts->power = client->dev.platform_data;
 		ts->power 	= pdata->power;
-		ts->orientation	= pdata->orientation;
+		//ts->orientation	= pdata->orientation;
 		ts->points_needed = pdata->points_needed;
 		ts->gpio_irq = pdata->gpio_irq;
 	}else{
@@ -743,6 +747,9 @@ static int synaptics_rmi4_probe(
 	max_y=1450;
 #elif defined(CONFIG_MACH_SKATEPLUS)
 	max_y=1884;
+/*ergate-003*/
+#elif defined(CONFIG_MACH_WARP2)
+	max_y=1885;
 #else
 	max_y=ts->max[1];
 #endif
@@ -784,7 +791,7 @@ static int synaptics_rmi4_probe(
 
 	set_bit(EV_SYN, ts->input_dev->evbit);
 	set_bit(EV_KEY, ts->input_dev->evbit);
-	set_bit(BTN_TOUCH, ts->input_dev->keybit);
+	//set_bit(BTN_TOUCH, ts->input_dev->keybit);
 	set_bit(EV_ABS, ts->input_dev->evbit);
 	set_bit(KEY_HOME, ts->input_dev->keybit);
 	set_bit(KEY_MENU, ts->input_dev->keybit);
@@ -805,10 +812,11 @@ static int synaptics_rmi4_probe(
 	set_bit(ABS_MT_POSITION_Y, ts->input_dev->absbit);
 	set_bit(ABS_MT_WIDTH_MAJOR, ts->input_dev->absbit);
 	set_bit(ABS_MT_ORIENTATION, ts->input_dev->absbit);
+	set_bit(ABS_MT_PRESSURE, ts->input_dev->absbit);
 
 	//input_set_abs_params(ts->input_dev, ABS_X, 0, max_x, 0, 0);
 	//input_set_abs_params(ts->input_dev, ABS_Y, 0, max_y, 0, 0);
-	input_set_abs_params(ts->input_dev, ABS_MT_ORIENTATION, 0, ts->orientation, 0, 0);
+	//input_set_abs_params(ts->input_dev, ABS_MT_ORIENTATION, 0, ts->orientation, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 0xFF, 0, 0);
 	//input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MINOR, 0, 0xF, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, max_x+1, 0, 0);
@@ -822,6 +830,7 @@ static int synaptics_rmi4_probe(
 	input_set_abs_params(ts->input_dev, ABS_PRESS, 0, 5, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_DOUBLE_TAP, 0, 5, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_PINCH, -0xFF, 0xFF, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_MT_PRESSURE, 0, 255, 0, 0);
 	//input_set_abs_params(ts->input_dev, ABS_PRESSURE, 0, 255, 0, 0);
 
 	ret = input_register_device(ts->input_dev);
